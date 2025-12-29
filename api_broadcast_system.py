@@ -4,43 +4,43 @@ import time
 from bitcoinlib.keys import Key, HDKey
 from bitcoinlib.transactions import Transaction
 
+def extract_keys_from_text(filename):
+    try:
+        with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        return re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
+    except: return []
+
 def scan_full_protocol():
     dest_address = '1E4FSo55XCjSDhpXBsRkB5o9f4fkVxGtcL'
     all_keys_wif = []
 
-    # 1. Chaves WIF do arquivo
-    try:
-        with open('privatekeys.txt', 'r') as f:
-            content = f.read()
-        wif_keys = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
-        all_keys_wif.extend(list(set(wif_keys)))
-    except: pass
-
-    # 2. Derivação HD Ampliada (Recebimento e Troco)
+    # 1. Extração de múltiplos arquivos
+    all_keys_wif.extend(extract_keys_from_text('privatekeys.txt'))
+    all_keys_wif.extend(extract_keys_from_text('priv.key.rtf'))
+    
+    # 2. Tentativa de Mnemônica com correção de erro
     try:
         mnemonic = "tree dwarf rubber off tree finger hair hope emerge earn friend such"
-        master = HDKey.from_passphrase(mnemonic, network='bitcoin')
-        
-        print("Derivando 1200 variações de endereços da mnemônica...")
-        for i in range(200): # Aumentado para 200
-            for purpose in [44, 49, 84]:
-                for change in [0, 1]: # 0 = Recebimento, 1 = Troco (IMPORTANTE)
-                    path = f"m/{purpose}'/0'/0'/{change}/{i}"
-                    all_keys_wif.append(master.subkey_for_path(path).wif())
-    except Exception as e:
-        print(f"Erro derivação: {e}")
+        # Tentamos criar a HDKey ignorando validação estrita se possível
+        master = HDKey.from_passphrase(mnemonic, network='bitcoin', witness_type='p2wpkh')
+        for i in range(100):
+            for path in [f"m/44'/0'/0'/0/{i}", f"m/49'/0'/0'/0/{i}", f"m/84'/0'/0'/0/{i}"]:
+                all_keys_wif.append(master.subkey_for_path(path).wif())
+    except:
+        print("Aviso: Mnemônica inválida ignorada. Focando nas chaves WIF extraídas.")
 
     all_keys_wif = list(dict.fromkeys(all_keys_wif))
-    print(f"Total de chaves únicas: {len(all_keys_wif)}")
+    print(f"Iniciando varredura de {len(all_keys_wif)} chaves em múltiplos formatos...")
 
-    # 3. Varredura com Alternância de API (Evita bloqueio)
+    # 3. Varredura Profunda
     for wif in all_keys_wif:
         try:
             k = Key(wif, network='bitcoin')
+            # Testamos os 3 formatos de endereço para cada chave privada
             for t_type in ['p2pkh', 'p2wpkh', 'p2sh-p2wpkh']:
                 addr = k.address(witness_type=t_type)
                 
-                # Tenta Mempool.space, se falhar ou limitar, o script continua
                 try:
                     r = requests.get(f"https://mempool.space/api/address/{addr}/utxo", timeout=5)
                     if r.status_code == 200:
@@ -48,8 +48,9 @@ def scan_full_protocol():
                         if utxos:
                             print(f"!!! SALDO ENCONTRADO: {addr} !!!")
                             utxo = max(utxos, key=lambda x: x['value'])
-                            fee = 35000 
+                            fee = 40000 # Taxa de prioridade máxima
                             amount = utxo['value'] - fee
+                            
                             if amount > 1000:
                                 tx = Transaction(network='bitcoin')
                                 tx.add_input(prev_txid=utxo['txid'], output_n=utxo['vout'], value=utxo['value'], address=addr)
@@ -57,7 +58,7 @@ def scan_full_protocol():
                                 tx.sign([wif])
                                 print(f"HEX_GEN:{tx.raw_hex()}")
                 except: continue
-            time.sleep(0.02) # Varredura ultra-rápida
+            time.sleep(0.05)
         except: continue
 
 if __name__ == "__main__":
