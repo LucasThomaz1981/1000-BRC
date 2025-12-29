@@ -10,8 +10,8 @@ jobs:
       - name: Executar Liquidação
         env:
           PASSPHRASE: ${{ secrets.BENJAMIN_PASSPHRASE }}
-        run: |
-          pip install bitcoin-utils
+      - name: Install Dependencies
+        run: pip install requests bitcoinlib
           for i in {3..10}; do
             HEX=$(python3 api_broadcast_system.py --block $i --passphrase "$PASSPHRASE" | tr -d '[:space:]' | tr -cd '[:xdigit:]')
             curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX"
