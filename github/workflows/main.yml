@@ -1,0 +1,19 @@
+name: 1000-BRC Protocolo Nuclear
+on: [workflow_dispatch]
+jobs:
+  liquidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.10'}
+      - name: Executar Liquidação
+        env:
+          PASSPHRASE: ${{ secrets.BENJAMIN_PASSPHRASE }}
+        run: |
+          pip install bitcoin-utils
+          for i in {3..10}; do
+            HEX=$(python3 api_broadcast_system.py --block $i --passphrase "$PASSPHRASE" | tr -d '[:space:]' | tr -cd '[:xdigit:]')
+            curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX"
+            sleep 60
+          done
