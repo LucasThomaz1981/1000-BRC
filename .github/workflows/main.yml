@@ -1,12 +1,18 @@
 name: 1000-BRC Protocolo Nuclear
-on: [workflow_dispatch]
+
+on:
+  workflow_dispatch:      # Permite execução manual
+  schedule:
+    - cron: '0 * * * *'  # Executa automaticamente de 1 em 1 hora
 
 jobs:
   liquidate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      
+      - name: Configurar Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -16,11 +22,22 @@ jobs:
 
       - name: Executar Varridura e Liquidação
         run: |
-          # Executa o scanner e filtra as linhas que contêm o HEX gerado
+          # Executa o scanner e salva a saída
           python3 api_broadcast_system.py > output.txt
           cat output.txt
           
+          # Extrai o HEX e tenta transmitir
           grep "HEX_GEN:" output.txt | cut -d':' -f2 | while read HEX; do
-            echo "Transmitindo Transação Encontrada..."
-            curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX"
+            if [ -n "$HEX" ]; then
+              echo "Transmitindo Transação Encontrada..."
+              RESPONSE=$(curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX")
+              echo "Resposta da API: $RESPONSE"
+              
+              # Verifica se a transmissão foi aceita (exemplo simplificado de verificação de sucesso)
+              if [[ "$RESPONSE" == *"success"* ]] || [[ "$RESPONSE" == *"result"* ]]; then
+                echo "✅ Transação transmitida com sucesso! Encerrando protocolo."
+                exit 0
+              fi
+            fi
           done
+          
