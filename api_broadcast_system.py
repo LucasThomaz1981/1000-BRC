@@ -12,31 +12,17 @@ MNEMONIC_11 = "tree dwarf rubber off tree finger hair hope emerge earn friend"
 DEST_ADDRESS = '1E4FSo55XCjSDhpXBsRkB5o9f4fkVxGtcL'
 
 def clean_rtf(filename):
-    """Extrai apenas texto puro de um arquivo RTF rudimentar"""
     try:
         with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
-            # Remove comandos RTF comuns (backslash commands)
             clean_text = re.sub(r'\\[a-z0-9]+(?:\s|-?\d+)?', '', content)
-            # Remove chaves de formatação
             clean_text = re.sub(r'[{}]', '', clean_text)
             return clean_text
-    except:
-        return ""
-
-def check_balance(address):
-    try:
-        r = requests.get(f"https://mempool.space/api/address/{address}/utxo", timeout=2)
-        if r.status_code == 200 and r.json():
-            return sum(u['value'] for u in r.json()), r.json()
-    except: pass
-    return 0, []
+    except: return ""
 
 def run_advanced_scan():
-    all_keys = []
-    
-    # 1. BUSCA EM ARQUIVOS (Incluindo RTF)
-    print("🔎 Vasculhando arquivos em busca de chaves...")
+    # 1. BUSCA EM ARQUIVOS
+    print("🔎 Vasculhando arquivos...")
     files = ['privatekeys.txt', 'priv.key.rtf', 'chavprivelet1.txt']
     for f in files:
         content = clean_rtf(f) if f.endswith('.rtf') else ""
@@ -45,31 +31,33 @@ def run_advanced_scan():
                 with open(f, 'r', errors='ignore') as file: content = file.read()
             except: continue
         
-        # Procura por WIFs (5, L ou K) e Hex (64 chars)
-        found_wif = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
-        found_hex = re.findall(r'\b[0-9a-fA-F]{64}\b', content)
-        all_keys.extend(found_wif + found_hex)
-    
-    all_keys = list(set(all_keys))
-    if all_keys:
-        print(f"✅ {len(all_keys)} chaves encontradas nos arquivos. Verificando...")
-        for wif in all_keys:
+        found = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
+        found.extend(re.findall(r'\b[0-9a-fA-F]{64}\b', content))
+        
+        for wif in set(found):
             for comp in [True, False]:
                 try:
                     k = Key(wif, network='bitcoin', compressed=comp)
                     if k.address() == TARGET_ADDRESS:
-                        print(f"⭐ ALVO ENCONTRADO EM ARQUIVO! WIF: {wif}")
+                        print(f"⭐ ALVO ENCONTRADO EM ARQUIVO: {f}! WIF: {wif}")
                 except: continue
 
-    # 2. BRUTE-FORCE DA 12ª PALAVRA (Correção de Checksum)
-    print("\n🔎 Iniciando Brute-force do Mnemonic (12ª palavra)...")
-    words = Mnemonic().wordlist('english')
+    # 2. BRUTE-FORCE DA 12ª PALAVRA
+    print("\n🔎 Iniciando Brute-force do Mnemonic...")
+    # Correção do erro da Wordlist
+    m_tool = Mnemonic('english')
+    words = m_tool.words
+    
+    valid_count = 0
     for word in words:
         test_mnemonic = f"{MNEMONIC_11} {word}"
         try:
+            # Validação rápida de checksum antes de derivar
             master = HDKey.from_passphrase(test_mnemonic, PASSWORD, network='bitcoin')
-            # Se não deu erro de checksum, a palavra é válida
-            print(f"Palavra válida: {word}. Testando derivações...")
+            
+            # Se chegou aqui, o checksum é válido
+            valid_count += 1
+            print(f"[{valid_count}] Palavra válida: {word}. Testando caminhos...")
             
             for purpose in [44, 49, 84]:
                 for i in range(100):
@@ -79,19 +67,18 @@ def run_advanced_scan():
                     
                     for comp in [True, False]:
                         k = Key(wif, network='bitcoin', compressed=comp)
-                        # Checa formato conforme purpose
                         if purpose == 44: addr = k.address()
                         elif purpose == 49: addr = k.address(witness_type='p2sh-p2wpkh')
                         else: addr = k.address(witness_type='p2wpkh')
 
                         if addr == TARGET_ADDRESS:
-                            print(f"⭐ !!! ALVO ENCONTRADO !!! Palavra: {word} | Path: {path} | WIF: {wif}")
-                            
-                        # Opcional: checar saldo real de qualquer endereço gerado
-                        # bal, utxos = check_balance(addr)
-                        # if bal > 0: print(f"💰 SALDO em {addr}: {bal} sats")
+                            print(f"⭐ !!! ALVO ENCONTRADO !!!")
+                            print(f"Palavra: {word} | Path: {path} | WIF: {wif}")
+                            # Aqui você pode adicionar a lógica de gerar o HEX se desejar
         except:
             continue
+
+    print(f"\n--- Varredura finalizada. {valid_count} mnemônicos válidos testados. ---")
 
 if __name__ == "__main__":
     run_advanced_scan()
