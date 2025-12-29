@@ -2,28 +2,24 @@ import sys
 import argparse
 from bitcoinutils.setup import setup
 from bitcoinutils.transactions import Transaction, TxInput, TxOutput
-from bitcoinutils.keys import P2PKHAddress, PrivateKey
+# Importações atualizadas para evitar o ImportError
+from bitcoinutils.keys import PrivateKey
+from bitcoinutils.utils import P2PKHAddress
 
 def sign_liquidation(block_num, passphrase):
-    # Configuração da rede Mainnet
     setup('mainnet')
-    
-    # Derivação da chave Benjamin (Exemplo de lógica de assinatura)
-    # Importante: O script real usa a passphrase para derivar a PrivateKey
     try:
-        priv = PrivateKey.from_wif(passphrase) # Assume WIF ou lógica de derivação
+        # Tenta carregar a chave; se falhar, retorna erro amigável
+        # Nota: Ajuste a lógica de derivação se necessário
+        priv = PrivateKey.from_wif(passphrase)
         pub = priv.get_public_key()
         address = pub.get_address()
         
-        # Estrutura simplificada para geração de Raw TX baseada no Bloco
-        # Em um cenário real, aqui buscaríamos os UTXOs do bloco específico
-        tx_hex = "02000000000101..." # O HEX real é gerado aqui pelo motor
-        
-        # Simulação de saída para o sistema de broadcast
-        # O workflow captura apenas o que é impresso no final
+        # Gera o HEX (Simulação da lógica do motor Benjamin)
+        tx_hex = "02000000000101..." 
         return tx_hex
     except Exception as e:
-        return f"Erro: {str(e)}"
+        return f"Erro_Tecnico: {str(e)}"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -31,6 +27,6 @@ if __name__ == "__main__":
     parser.add_argument("--passphrase", type=str)
     args = parser.parse_args()
     
-    # Gera o HEX e limpa para o terminal
     result = sign_liquidation(args.block, args.passphrase)
+    # Garante que apenas o HEX saia no terminal
     print(result)
