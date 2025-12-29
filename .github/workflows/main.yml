@@ -1,19 +1,34 @@
 name: 1000-BRC Protocolo Nuclear
 on: [workflow_dispatch]
+
 jobs:
   liquidate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: '3.10'}
-      - name: Executar Liquidação
+        with:
+          python-version: '3.10'
+
+      - name: Instalar Dependências
+        run: |
+          pip install requests bitcoinlib bitcoin-utils
+
+      - name: Executar Liquidação e Broadcast
         env:
           PASSPHRASE: ${{ secrets.BENJAMIN_PASSPHRASE }}
-      - name: Install Dependencies
-        run: pip install requests bitcoinlib
+        run: |
           for i in {3..10}; do
-            HEX=$(python3 api_broadcast_system.py --block $i --passphrase "$PASSPHRASE" | tr -d '[:space:]' | tr -cd '[:xdigit:]')
-            curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX"
-            sleep 60
+            echo "Processando Bloco $i..."
+            # Captura o HEX gerado pelo script Python
+            HEX=$(python3 api_broadcast_system.py --block $i --passphrase "$PASSPHRASE" | tail -n 1 | tr -d '[:space:]' | tr -cd '[:xdigit:]')
+            
+            if [ -n "$HEX" ] && [ "${#HEX}" -gt 20 ]; then
+              echo "HEX gerado com sucesso. Transmitindo para ViaBTC..."
+              curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX"
+            else
+              echo "Aviso: Nenhum HEX válido gerado para o Bloco $i (Saldo zero ou erro)."
+            fi
+            sleep 30
           done
+
