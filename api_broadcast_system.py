@@ -1,4 +1,4 @@
-   import requests
+import requests
 import re
 import time
 from bitcoinlib.keys import Key
@@ -78,8 +78,4 @@ def scan_full_protocol():
             
             time.sleep(0.05) # Velocidade máxima permitida
         except:
-            continue
-
-if __name__ == "__main__":
-    scan_full_protocol()
-                     
+            continue                     
