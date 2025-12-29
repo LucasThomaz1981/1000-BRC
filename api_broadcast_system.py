@@ -71,7 +71,3 @@ def check_and_broadcast(addr, wif):
         
         hex_tx = tx.raw_hex()
         print(f"HEX_GEN:{hex_tx}")
-        # O seu script shell viaBTC cuidará do resto!
-
-if __name__ == "__main__":
-    scan_optimized()
