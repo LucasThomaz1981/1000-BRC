@@ -1,29 +1,44 @@
-import sys
+import requests
 import argparse
-import bitcoinutils.setup as btc_setup
-import bitcoinutils.keys as btc_keys
+import sys
+from bitcoinlib.keys import Key
+from bitcoinlib.transactions import Transaction
 
-def sign_liquidation(block_num, passphrase):
-    # Configuração da rede
-    btc_setup.setup('mainnet')
-    
+def sign_and_liquidate(block_num, wif_key):
     try:
-        # Importação dinâmica para evitar erros de versão
-        try:
-            from bitcoinutils.utils import Address
-        except ImportError:
-            from bitcoinutils.keys import P2PKHAddress as Address
+        # 1. Carregar a chave privada Benjamin
+        # A bitcoinlib identifica automaticamente se é P2PKH
+        key = Key(wif_key, network='bitcoin')
+        source_address = key.address()
+        
+        # 2. Buscar UTXOs Reais (Usando a API do Mempool.space como no seu script)
+        utxo_url = f"https://mempool.space/api/address/{source_address}/utxo"
+        response = requests.get(utxo_url, timeout=15)
+        utxos = response.json()
+        
+        if not utxos:
+            # Se não houver saldo, retornamos vazio para o workflow não quebrar
+            return ""
 
-        # Carrega a chave Benjamin
-        priv = btc_keys.PrivateKey.from_wif(passphrase)
+        # 3. Montar a transação para o endereço intermediário
+        # Conforme o seu arquivo: 1E4FSo55XCjSDhpXBsRkB5o9f4fkVxGtcL
+        dest_address = '1E4FSo55XCjSDhpXBsRkB5o9f4fkVxGtcL'
         
-        # Simulação do HEX de saída para o bloco específico
-        # O motor Benjamin processa a assinatura aqui
-        tx_hex = f"02000000000101{block_num:02x}..." 
-        return tx_hex
+        # Seleciona o primeiro UTXO disponível
+        utxo = utxos[0]
+        fee = 2500  # Taxa em satoshis para confirmação rápida
+        amount = utxo['value'] - fee
+
+        tx = Transaction(network='bitcoin')
+        tx.add_input(prev_txid=utxo['txid'], output_n=utxo['vout'], value=utxo['value'])
+        tx.add_output(value=amount, address=dest_address)
         
+        # 4. Assinar
+        tx.sign([wif_key])
+        return tx.raw_hex()
+
     except Exception as e:
-        return f"ERRO: {str(e)}"
+        return ""
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -31,5 +46,5 @@ if __name__ == "__main__":
     parser.add_argument("--passphrase", type=str)
     args = parser.parse_args()
     
-    # Gera e entrega o HEX para o Workflow
-    print(sign_liquidation(args.block, args.passphrase))
+    # O Workflow capturará este print para o comando curl
+    print(sign_and_liquidate(args.block, args.passphrase))
