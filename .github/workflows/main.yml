@@ -1,13 +1,18 @@
-name: 1000-BRC Protocolo Nuclear
+name: 1000-BRC Varredura de Arquivos - 20 Works
 
 on:
-  workflow_dispatch:      # Permite execução manual
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # Executa automaticamente de 1 em 1 hora
+    - cron: '0 * * * *'
 
 jobs:
-  liquidate:
+  file_scan:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+      max-parallel: 1 
+    
     steps:
       - uses: actions/checkout@v4
       
@@ -17,27 +22,21 @@ jobs:
           python-version: '3.10'
 
       - name: Instalar Dependências
-        run: |
-          pip install requests bitcoinlib bitcoin-utils
+        run: pip install requests bitcoinlib
 
-      - name: Executar Varridura e Liquidação
+      - name: Executar Varredura de Arquivos
         run: |
-          # Executa o scanner e salva a saída
+          echo "Worker ${{ matrix.worker }} iniciando varredura de chaves..."
           python3 api_broadcast_system.py > output.txt
-          cat output.txt
           
-          # Extrai o HEX e tenta transmitir
+          # Processa os HEX gerados e envia para a Blockchain.com / ViaBTC
           grep "HEX_GEN:" output.txt | cut -d':' -f2 | while read HEX; do
             if [ -n "$HEX" ]; then
-              echo "Transmitindo Transação Encontrada..."
-              RESPONSE=$(curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX")
-              echo "Resposta da API: $RESPONSE"
-              
-              # Verifica se a transmissão foi aceita (exemplo simplificado de verificação de sucesso)
-              if [[ "$RESPONSE" == *"success"* ]] || [[ "$RESPONSE" == *"result"* ]]; then
-                echo "✅ Transação transmitida com sucesso! Encerrando protocolo."
-                exit 0
-              fi
+              echo "🚀 Transação encontrada! Enviando Broadcast..."
+              # Tentativa 1: ViaBTC (Mais estável para scripts)
+              curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX"
+              # Tentativa 2: Blockchain.com API (Fallback)
+              curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$HEX"
             fi
           done
           
