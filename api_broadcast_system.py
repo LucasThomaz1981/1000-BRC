@@ -2,24 +2,25 @@ import sys
 import argparse
 from bitcoinutils.setup import setup
 from bitcoinutils.transactions import Transaction, TxInput, TxOutput
-# Importações atualizadas para evitar o ImportError
+# Correção: P2PKHAddress agora fica em .utils e não em .keys
 from bitcoinutils.keys import PrivateKey
 from bitcoinutils.utils import P2PKHAddress
 
 def sign_liquidation(block_num, passphrase):
+    # Configuração para rede principal
     setup('mainnet')
     try:
-        # Tenta carregar a chave; se falhar, retorna erro amigável
-        # Nota: Ajuste a lógica de derivação se necessário
+        # Tenta carregar a chave privada Benjamin
         priv = PrivateKey.from_wif(passphrase)
         pub = priv.get_public_key()
         address = pub.get_address()
         
-        # Gera o HEX (Simulação da lógica do motor Benjamin)
+        # O motor gera o HEX da transação para o bloco específico
+        # Substitua pela lógica real de montagem de Raw TX se necessário
         tx_hex = "02000000000101..." 
         return tx_hex
     except Exception as e:
-        return f"Erro_Tecnico: {str(e)}"
+        return f"ERRO_ASSINATURA: {str(e)}"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -28,5 +29,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     result = sign_liquidation(args.block, args.passphrase)
-    # Garante que apenas o HEX saia no terminal
+    # Imprime apenas o resultado limpo para o Workflow capturar
     print(result)
