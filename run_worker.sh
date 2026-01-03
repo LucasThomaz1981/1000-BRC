@@ -1,34 +1,37 @@
 #!/bin/bash
 
-# Define o nome do arquivo de saída temporário para este worker específico
-OUTPUT_FILE="output_worker_${WORKER_ID}.txt"
+# Nome do arquivo de log deste worker
+WORK_LOG="log_worker_${WORKER_ID}.txt"
 
 echo "--------------------------------------------------"
-echo "🚀 WORKER $WORKER_ID: Iniciando Processamento..."
+echo "🚀 INICIANDO WORKER $WORKER_ID"
 echo "--------------------------------------------------"
 
-# Executa o Python com -u (unbuffered) para garantir que o Shell leia as linhas instantaneamente
-# O 'tee' permite que você veja o log no GitHub e salve no arquivo ao mesmo tempo
-python3 -u api_broadcast_system.py | tee "$OUTPUT_FILE"
+# Executa o Python em modo 'unbuffered' (-u) para o Shell ler em tempo real
+# O 'tee' garante que você veja o progresso no console do GitHub
+python3 -u api_broadcast_system.py | tee "$WORK_LOG"
 
 echo "--------------------------------------------------"
-echo "🔍 WORKER $WORKER_ID: Varredura concluída. Verificando HEX_GEN..."
+echo "🔍 VARREDURA CONCLUÍDA. PROCESSANDO BROADCASTS..."
+echo "--------------------------------------------------"
 
-# Busca por transações geradas no arquivo de saída
-grep "HEX_GEN:" "$OUTPUT_FILE" | cut -d':' -f2 | while read HEX; do
-    if [ -n "$HEX" ]; then
-        echo "💰 Transação encontrada! Iniciando Broadcast na rede..."
+# Procura as linhas HEX_GEN geradas pelo Python
+grep "HEX_GEN:" "$WORK_LOG" | cut -d':' -f2 | while read HEX_DATA; do
+    if [ -n "$HEX_DATA" ]; then
+        echo "📡 Transação Assinada Detectada!"
+        
+        # 1. Broadcast via Blockchain.com
+        echo "🌐 Tentando Blockchain.com..."
+        RESPONSE_BC=$(curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$HEX_DATA")
+        echo "Resposta Blockchain: $RESPONSE_BC"
 
-        # Tentativa 1: ViaBTC
-        echo "📡 Enviando para ViaBTC..."
-        RESP1=$(curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX")
-        echo "Retorno ViaBTC: $RESP1"
-
-        # Tentativa 2: Blockchain.com
-        echo "📡 Enviando para Blockchain.com..."
-        RESP2=$(curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$HEX")
-        echo "Retorno Blockchain: $RESP2"
+        # 2. Broadcast via ViaBTC (Excelente para taxas customizadas)
+        echo "🌐 Tentando ViaBTC..."
+        RESPONSE_VIA=$(curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX_DATA")
+        echo "Resposta ViaBTC: $RESPONSE_VIA"
+        
+        echo "--------------------------------------------------"
     fi
 done
 
-echo "✅ WORKER $WORKER_ID Finalizado."
+echo "✅ PROCESSO DO WORKER $WORKER_ID FINALIZADO."
