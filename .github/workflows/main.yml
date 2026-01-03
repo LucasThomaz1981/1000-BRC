@@ -1,20 +1,23 @@
-name: 1000-BRC Varredura de Arquivos - 20 Works
+name: 1000-BRC Varredura de Arquivos - 20 Workers
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Permite correr manualmente
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *' # Corre de 1 em 1 hora
 
 jobs:
   file_scan:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # Define os 20 workers
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-      max-parallel: 1 
+      # Define quantos rodam ao mesmo tempo (o GitHub limita o total, 5 é um bom número)
+      max-parallel: 5 
     
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout do código
+        uses: actions/checkout@v4
       
       - name: Configurar Python
         uses: actions/setup-python@v5
@@ -22,21 +25,17 @@ jobs:
           python-version: '3.10'
 
       - name: Instalar Dependências
-        run: pip install requests bitcoinlib
-
-      - name: Executar Varredura de Arquivos
         run: |
-          echo "Worker ${{ matrix.worker }} iniciando varredura de chaves..."
-          python3 api_broadcast_system.py > output.txt
-          
-          # Processa os HEX gerados e envia para a Blockchain.com / ViaBTC
-          grep "HEX_GEN:" output.txt | cut -d':' -f2 | while read HEX; do
-            if [ -n "$HEX" ]; then
-              echo "🚀 Transação encontrada! Enviando Broadcast..."
-              # Tentativa 1: ViaBTC (Mais estável para scripts)
-              curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX"
-              # Tentativa 2: Blockchain.com API (Fallback)
-              curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$HEX"
-            fi
-          done
-          
+          python -m pip install --upgrade pip
+          pip install requests bitcoinlib
+
+      - name: Dar permissão ao Script Shell
+        run: chmod +x run_worker.sh
+
+      - name: Executar Varredura
+        env:
+          WORKER_ID: ${{ matrix.worker }}
+        run: |
+          echo "Iniciando Worker $WORKER_ID..."
+          # Usamos o script shell para garantir que o processamento do HEX seja em tempo real
+          ./run_worker.sh
