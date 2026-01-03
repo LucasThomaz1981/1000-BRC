@@ -1,4 +1,4 @@
-import requests
+requests
 import re
 import time
 from bitcoinlib.keys import Key
