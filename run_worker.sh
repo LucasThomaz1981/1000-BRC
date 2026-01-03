@@ -1,29 +1,34 @@
 #!/bin/bash
 
-echo "Worker iniciado: Varredura e Broadcast"
+# Define o nome do arquivo de saída temporário para este worker específico
+OUTPUT_FILE="output_worker_${WORKER_ID}.txt"
 
-# 1. Executa o python com -u (unbuffered) para o grep ler em tempo real
-# Redirecionamos a saída para um arquivo e para o console simultaneamente
-python3 -u api_broadcast_system.py | tee output.txt
+echo "--------------------------------------------------"
+echo "🚀 WORKER $WORKER_ID: Iniciando Processamento..."
+echo "--------------------------------------------------"
 
-echo "------------------------------------------"
-echo "Processando HEX encontrados..."
+# Executa o Python com -u (unbuffered) para garantir que o Shell leia as linhas instantaneamente
+# O 'tee' permite que você veja o log no GitHub e salve no arquivo ao mesmo tempo
+python3 -u api_broadcast_system.py | tee "$OUTPUT_FILE"
 
-# 2. Filtra os HEX_GEN gerados e tenta o broadcast
-grep "HEX_GEN:" output.txt | cut -d':' -f2 | while read HEX; do
+echo "--------------------------------------------------"
+echo "🔍 WORKER $WORKER_ID: Varredura concluída. Verificando HEX_GEN..."
+
+# Busca por transações geradas no arquivo de saída
+grep "HEX_GEN:" "$OUTPUT_FILE" | cut -d':' -f2 | while read HEX; do
     if [ -n "$HEX" ]; then
-        echo "🚀 Transação detectada! Enviando..."
+        echo "💰 Transação encontrada! Iniciando Broadcast na rede..."
 
         # Tentativa 1: ViaBTC
-        echo "Tentando ViaBTC..."
+        echo "📡 Enviando para ViaBTC..."
         RESP1=$(curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX")
-        echo "Resposta ViaBTC: $RESP1"
+        echo "Retorno ViaBTC: $RESP1"
 
         # Tentativa 2: Blockchain.com
-        echo "Tentando Blockchain.com..."
+        echo "📡 Enviando para Blockchain.com..."
         RESP2=$(curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$HEX")
-        echo "Resposta Blockchain: $RESP2"
+        echo "Retorno Blockchain: $RESP2"
     fi
 done
 
-echo "Processo concluído."
+echo "✅ WORKER $WORKER_ID Finalizado."
