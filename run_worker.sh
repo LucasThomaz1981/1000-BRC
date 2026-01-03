@@ -1,37 +1,31 @@
 #!/bin/bash
 
-# Nome do arquivo de log deste worker
-WORK_LOG="log_worker_${WORKER_ID}.txt"
+LOG_FILE="worker_${WORKER_ID}_output.txt"
 
 echo "--------------------------------------------------"
-echo "🚀 INICIANDO WORKER $WORKER_ID"
+echo "🚀 WORKER $WORKER_ID EM EXECUÇÃO"
 echo "--------------------------------------------------"
 
-# Executa o Python em modo 'unbuffered' (-u) para o Shell ler em tempo real
-# O 'tee' garante que você veja o progresso no console do GitHub
-python3 -u api_broadcast_system.py | tee "$WORK_LOG"
+# Executa Python e salva log em tempo real
+python3 -u api_broadcast_system.py | tee "$LOG_FILE"
 
 echo "--------------------------------------------------"
-echo "🔍 VARREDURA CONCLUÍDA. PROCESSANDO BROADCASTS..."
+echo "📡 PROCESSANDO ENVIO DE TRANSAÇÕES (BROADCAST)..."
 echo "--------------------------------------------------"
 
-# Procura as linhas HEX_GEN geradas pelo Python
-grep "HEX_GEN:" "$WORK_LOG" | cut -d':' -f2 | while read HEX_DATA; do
-    if [ -n "$HEX_DATA" ]; then
-        echo "📡 Transação Assinada Detectada!"
+# Extrai o HEX do log e envia para as APIs
+grep "HEX_GEN:" "$LOG_FILE" | cut -d':' -f2 | while read RAW_HEX; do
+    if [ -n "$RAW_HEX" ]; then
+        echo "⚡ Enviando transação detectada..."
         
-        # 1. Broadcast via Blockchain.com
-        echo "🌐 Tentando Blockchain.com..."
-        RESPONSE_BC=$(curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$HEX_DATA")
-        echo "Resposta Blockchain: $RESPONSE_BC"
+        # Envio Blockchain.com
+        RESP1=$(curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$RAW_HEX")
+        echo "Blockchain.com: $RESP1"
 
-        # 2. Broadcast via ViaBTC (Excelente para taxas customizadas)
-        echo "🌐 Tentando ViaBTC..."
-        RESPONSE_VIA=$(curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$HEX_DATA")
-        echo "Resposta ViaBTC: $RESPONSE_VIA"
-        
-        echo "--------------------------------------------------"
+        # Envio ViaBTC
+        RESP2=$(curl -s -X POST https://www.viabtc.com/res/tools/v1/broadcast -d "raw_tx=$RAW_HEX")
+        echo "ViaBTC: $RESP2"
     fi
 done
 
-echo "✅ PROCESSO DO WORKER $WORKER_ID FINALIZADO."
+echo "✅ WORKER $WORKER_ID FINALIZADO."
