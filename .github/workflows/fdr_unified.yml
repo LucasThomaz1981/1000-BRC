@@ -1,0 +1,35 @@
+name: FDR Unified System - 10 Workers
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 * * * *' # Executa automaticamente a cada hora (no minuto 30)
+
+jobs:
+  fdr_scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      max-parallel: 5
+    
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+      
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Instalar Dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests bitcoinlib
+      
+      - name: Executar Sistema Unificado FDR
+        env:
+          WORKER_ID: ${{ matrix.worker }}
+          TOTAL_WORKERS: 10
+        run: |
+          echo "Iniciando FDR Unified Worker $WORKER_ID..."
+          python fdr_unified_system.py
