@@ -1,40 +1,79 @@
 name: 1000-BRC Pool System - 20 Workers
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Permite iniciar manualmente
+  schedule:
+    - cron: '0 */6 * * *' # Executa a cada 6 horas automaticamente
 
 jobs:
+  # JOB 1: Prepara o arquivo único com todas as chaves do repositório
   prepare:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
-      - name: Criar Pool
-        run: python prepare_pool.py
-      - name: Upload Pool
-        uses: actions/upload-artifact@v4
-        with: { name: pool, path: MASTER_POOL.txt }
+      - name: Checkout do código
+        uses: actions/checkout@v4
 
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Criar Pool de Chaves (Unificação)
+        run: |
+          if [ -f "prepare_pool.py" ]; then
+            python prepare_pool.py
+          else
+            echo "Erro: prepare_pool.py não encontrado!"
+            exit 1
+          fi
+
+      - name: Upload do Pool como Artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: pool-keys
+          path: MASTER_POOL.txt
+          retention-days: 1
+
+  # JOB 2: Varredura em massa distribuída por 20 instâncias
   scan:
     needs: prepare
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
+        # Define os 20 workers paralelos
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
-      - name: Deps
-        run: pip install requests bitcoinlib
-      - name: Download Pool
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalar Dependências de Sistema e Python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp3-dev libssl-dev
+          python -m pip install --upgrade pip
+          pip install requests bitcoinlib
+
+      - name: Download do Pool de Chaves
         uses: actions/download-artifact@v4
-        with: { name: pool }
-      - name: Run
+        with:
+          name: pool-keys
+
+      - name: Executar Varredura e Auto-Broadcast
         env:
           WORKER_ID: ${{ matrix.worker }}
           TOTAL_WORKERS: 20
         run: |
+          # Garante permissão de execução no script bash
           chmod +x run_worker.sh
+          
+          echo "Iniciando Worker $WORKER_ID de $TOTAL_WORKERS..."
+          
+          # O comando 'unbuffer' ou 'python -u' é essencial para ver os logs em tempo real
           ./run_worker.sh
