@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Definido exatamente para 10 workers
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
       max-parallel: 10
     
@@ -30,10 +29,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests bitcoinlib
       
-      - name: Diagnóstico - Listar Arquivos
+      - name: 📋 INVENTÁRIO DE ARQUIVOS (Diagnóstico)
         run: |
-          echo "🔍 Arquivos detectados para o scan:"
-          find . -maxdepth 2 -not -path '*/.*'
+          echo "=== LISTA COMPLETA DE ARQUIVOS NO REPOSITÓRIO ==="
+          find . -maxdepth 3 -not -path '*/.*'
+          echo "================================================"
 
       - name: Dar Permissão ao Runner
         run: chmod +x run_worker.sh
@@ -44,5 +44,4 @@ jobs:
           TOTAL_WORKERS: 10
         run: |
           echo "🚀 Iniciando Worker $WORKER_ID de 10..."
-          # Chama o script Bash que agora detecta automaticamente o nome do arquivo Python
           ./run_worker.sh
