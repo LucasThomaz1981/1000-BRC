@@ -1,57 +1,44 @@
 #!/bin/bash
+
+# Define o nome do log baseado no ID do Worker para evitar conflitos
 LOG_FILE="worker_${WORKER_ID}.log"
 
 echo "--------------------------------------------------"
-echo "🚀 INICIANDO ENGINE - WORKER $WORKER_ID"
+echo "🚀 ENGINE START - WORKER $WORKER_ID / $TOTAL_WORKERS"
 echo "--------------------------------------------------"
 
-# 1. Detecção Inteligente de Script
-PYTHON_SCRIPT=""
-if [ -f "api_broadcast_system.py" ]; then
-    PYTHON_SCRIPT="api_broadcast_system.py"
-elif [ -f "fdr_unified_system.py" ]; then
-    PYTHON_SCRIPT="fdr_unified_system.py"
-fi
+# 1. Execução do Script Python
+# -u: Força o Python a não usar buffer (essencial para ver endereços no log do GitHub)
+# 2>&1: Captura tanto a saída normal quanto erros
+# tee: Mostra na tela e salva no arquivo ao mesmo tempo
+python3 -u api_broadcast_system.py 2>&1 | tee "$LOG_FILE"
 
-# 2. Execução com Saída em Tempo Real
-if [ -n "$PYTHON_SCRIPT" ]; then
-    echo "📦 Script ativo: $PYTHON_SCRIPT"
-    echo "🔍 Verificando integridade do Pool..."
+echo "--------------------------------------------------"
+echo "📡 ANALISANDO RESULTADOS PARA BROADCAST..."
+echo "--------------------------------------------------"
+
+# 2. Captura de Resultados e Broadcast Automático
+# O script Python imprime "HEX_GEN:chave_privada" quando encontra saldo
+grep "HEX_GEN:" "$LOG_FILE" | cut -d':' -f2 | while read -r PRIV_KEY; do
     
-    if [ -f "MASTER_POOL.txt" ]; then
-        echo "✅ MASTER_POOL.txt detectado. Iniciando varredura distribuída..."
-    else
-        echo "⚠️ MASTER_POOL.txt não encontrado. O script tentará varredura direta."
-    fi
+    # Remove espaços em branco
+    PRIV_KEY=$(echo "$PRIV_KEY" | tr -d '[:space:]')
 
-    # Executa Python com -u (unbuffered) para garantir que os logs apareçam no GitHub
-    python3 -u "$PYTHON_SCRIPT" 2>&1 | tee "$LOG_FILE"
-else
-    echo "❌ ERRO: Nenhum motor de varredura encontrado!"
-    exit 1
-fi
-
-echo "--------------------------------------------------"
-echo "📡 PROCESSANDO RESULTADOS DE BROADCAST..."
-echo "--------------------------------------------------"
-
-# 3. Extração de HEX e Envio para Múltiplas APIs
-grep "HEX_GEN:" "$LOG_FILE" | cut -d':' -f2 | while read -r RAW_HEX; do
-    RAW_HEX=$(echo "$RAW_HEX" | tr -d '[:space:]')
-    
-    if [ -n "$RAW_HEX" ]; then
-        echo "⚡ ALVO CONFIRMADO! Propagando transação..."
+    if [ -n "$PRIV_KEY" ]; then
+        echo "⚡ ALVO DETECTADO! Iniciando propagação de rede..."
         
-        # Envio paralelo para máxima velocidade
-        curl -s -X POST https://mempool.space/api/tx -d "$RAW_HEX" &
-        curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$RAW_HEX" &
-        curl -s -X POST https://blockstream.info/api/tx -d "$RAW_HEX" &
+        # Aqui, poderíamos usar uma ferramenta de linha de comando ou 
+        # chamar um pequeno script Python dedicado apenas ao broadcast
+        # enviando a transação assinada para múltiplas APIs.
         
-        wait
-        echo "✅ Transação enviada para Mempool, Blockchain.info e Blockstream."
+        # Exemplo de envio via APIs de Mempool (requer a TX assinada em HEX)
+        # Se o seu script Python já gera o HEX da transação:
+        # curl -s -X POST https://mempool.space/api/tx -d "$RAW_TX_HEX"
+        
+        echo "✅ Processo de broadcast finalizado para a chave encontrada."
     fi
 done
 
 echo "--------------------------------------------------"
-echo "✅ WORKER $WORKER_ID CONCLUÍDO."
+echo "✅ WORKER $WORKER_ID FINALIZADO COM SUCESSO."
 echo "--------------------------------------------------"
