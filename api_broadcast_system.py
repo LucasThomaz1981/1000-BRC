@@ -11,12 +11,10 @@ WORKER_ID = int(os.environ.get('WORKER_ID', 1))
 TOTAL_WORKERS = int(os.environ.get('TOTAL_WORKERS', 20))
 
 def process_key(priv_key_str, current, total):
-    # Limpeza absoluta da chave
     clean_key = "".join(char for char in priv_key_str if char.isprintable()).strip()
     if not clean_key: return
 
     try:
-        # Deep Scan para xprv
         if clean_key.startswith('xprv'):
             print(f"📦 [{current}/{total}] W{WORKER_ID} | Derivando Master Key...", flush=True)
             master = Key(clean_key)
@@ -26,32 +24,50 @@ def process_key(priv_key_str, current, total):
 
         k = Key(clean_key, network='bitcoin')
         
-        # Formatos de endereço
-        for w_type in [None, 'p2sh-p2wpkh', 'p2wpkh']:
-            addr = k.address(witness_type=w_type)
-            
-            # --- MOSTRAR VARREDURA EM TEMPO REAL ---
-            print(f"🔎 [{current}/{total}] W{WORKER_ID} | {addr}", flush=True)
-            
+        # Mapeamento de tipos: address (Legacy), p2sh-p2wpkh (SegWit), bech32 (Native)
+        addr_types = [
+            ('Legacy', 'address'),
+            ('SegWit', 'p2sh-p2wpkh'),
+            ('Native', 'bech32')
+        ]
+
+        for label, enc in addr_types:
+            addr = k.address(encoding=enc)
+            bal = 0.0
+            status = "⏳"
+
             try:
+                # Consulta API Mempool.space
                 r = requests.get(f"https://mempool.space/api/address/{addr}", timeout=10)
                 if r.status_code == 200:
                     data = r.json()
                     stats = data.get('chain_stats', {})
                     mempool = data.get('mempool_stats', {})
-                    bal = (stats.get('funded_txo_sum', 0) + mempool.get('funded_txo_sum', 0)) - \
-                          (stats.get('spent_txo_sum', 0) + mempool.get('spent_txo_sum', 0))
                     
-                    if bal > 0:
-                        print(f"\n🚨 SALDO DETECTADO! {addr}: {bal} sats", flush=True)
+                    # Soma saldo confirmado + mempool
+                    sats = (stats.get('funded_txo_sum', 0) + mempool.get('funded_txo_sum', 0)) - \
+                           (stats.get('spent_txo_sum', 0) + mempool.get('spent_txo_sum', 0))
+                    
+                    bal = sats / 100000000.0 # Converte para BTC
+                    status = "✅" if sats == 0 else "🚨 SALDO!"
+                    
+                    # LOG DE VARREDURA COM SALDO
+                    print(f"🔎 [{current}/{total}] W{WORKER_ID} | {status} | {label:8} | {addr} | Bal: {bal:.8f} BTC", flush=True)
+
+                    if sats > 0:
                         print(f"HEX_GEN:{clean_key}", flush=True)
+                
                 elif r.status_code == 429:
-                    print("⚠️ API Limit. Aguardando 10s...", flush=True)
+                    print(f"⚠️ [{current}/{total}] W{WORKER_ID} | API Rate Limit - Aguardando 10s...", flush=True)
                     time.sleep(10)
-            except:
-                pass
+                else:
+                    print(f"🔎 [{current}/{total}] W{WORKER_ID} | ❌ Erro API | {addr}", flush=True)
+
+            except Exception as e:
+                print(f"🔎 [{current}/{total}] W{WORKER_ID} | ⚠️ Erro Conexão | {addr}", flush=True)
             
-            time.sleep(0.1) # Evita bloqueio da API
+            # Delay para evitar bloqueio de IP (Mempool aceita ~2 req/sec)
+            time.sleep(0.15)
             
     except Exception as e:
         print(f"❌ [{current}/{total}] Erro na chave: {e}", flush=True)
@@ -65,6 +81,7 @@ if __name__ == "__main__":
         total_keys = len(my_keys)
         
         print(f"🚀 Worker {WORKER_ID} Iniciado | {total_keys} chaves no lote.", flush=True)
+        print("-" * 100, flush=True)
         
         for idx, key in enumerate(my_keys, 1):
             process_key(key, idx, total_keys)
