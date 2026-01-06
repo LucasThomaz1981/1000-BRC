@@ -1,19 +1,18 @@
 name: 1000-BRC Varredura de Arquivos - 20 Workers
 
 on:
-  workflow_dispatch: # Permite correr manualmente
+  workflow_dispatch:
   schedule:
-    - cron: '0 * * * *' # Corre de 1 em 1 hora
+    - cron: '0 * * * *'
 
 jobs:
   file_scan:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Define os 20 workers
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-      # Define quantos rodam ao mesmo tempo (o GitHub limita o total, 5 é um bom número)
-      max-parallel: 5 
+      # Aumentei para 10 para terminar o scan 2x mais rápido
+      max-parallel: 10 
     
     steps:
       - name: Checkout do código
@@ -24,8 +23,11 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Instalar Dependências
+      - name: Instalar Dependências do Sistema e Python
         run: |
+          # Necessário para a compilação da bitcoinlib no Linux
+          sudo apt-get update
+          sudo apt-get install -y libgmp3-dev
           python -m pip install --upgrade pip
           pip install requests bitcoinlib
 
@@ -35,7 +37,9 @@ jobs:
       - name: Executar Varredura
         env:
           WORKER_ID: ${{ matrix.worker }}
+          # Adicionei TOTAL_WORKERS para o Python saber como dividir os arquivos
+          TOTAL_WORKERS: 20
         run: |
           echo "Iniciando Worker $WORKER_ID..."
-          # Usamos o script shell para garantir que o processamento do HEX seja em tempo real
+          # O script shell chama o api_broadcast_system.py
           ./run_worker.sh
