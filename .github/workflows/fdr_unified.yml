@@ -2,7 +2,7 @@ name: FDR Unified System - 10 Workers
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 * * * *' # Executa automaticamente a cada hora
+    - cron: '30 * * * *'
 
 jobs:
   fdr_scan:
@@ -10,7 +10,7 @@ jobs:
     strategy:
       matrix:
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-      max-parallel: 10 # Execução simultânea máxima
+      max-parallel: 10
     
     steps:
       - name: Checkout do código
@@ -20,11 +20,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # Acelera as próximas execuções
+          # Removido o cache que causava o erro
       
-      - name: Instalar Dependências do Sistema e Python
+      - name: Instalar Dependências
         run: |
-          # Necessário para a biblioteca bitcoinlib funcionar no Ubuntu
           sudo apt-get update
           sudo apt-get install -y libgmp3-dev
           python -m pip install --upgrade pip
@@ -35,8 +34,6 @@ jobs:
           WORKER_ID: ${{ matrix.worker }}
           TOTAL_WORKERS: 10
         run: |
-          echo "--------------------------------------------------"
-          echo "🚀 Iniciando FDR Unified Worker $WORKER_ID de $TOTAL_WORKERS"
-          echo "--------------------------------------------------"
-          # O parâmetro -u garante que o log apareça instantaneamente
+          echo "🚀 Iniciando FDR Unified Worker $WORKER_ID..."
+          # O parâmetro -u é vital para ver o log em tempo real
           python -u fdr_unified_system.py
