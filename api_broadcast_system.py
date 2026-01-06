@@ -15,6 +15,7 @@ def process_key(priv_key_str, current, total):
     if not clean_key: return
 
     try:
+        # Suporte a chaves mestras
         if clean_key.startswith('xprv'):
             print(f"📦 [{current}/{total}] W{WORKER_ID} | Derivando Master Key...", flush=True)
             master = Key(clean_key)
@@ -22,55 +23,51 @@ def process_key(priv_key_str, current, total):
                 process_key(master.subkey_for_path(f"0/{i}").wif(), f"{current}.{i}", total)
             return
 
+        # Inicializa a chave na rede Bitcoin
         k = Key(clean_key, network='bitcoin')
         
-        # Mapeamento de tipos: address (Legacy), p2sh-p2wpkh (SegWit), bech32 (Native)
-        addr_types = [
-            ('Legacy', 'address'),
-            ('SegWit', 'p2sh-p2wpkh'),
-            ('Native', 'bech32')
+        # Formatos compatíveis com as versões novas da bitcoinlib
+        # 'base58' -> Legacy (1...) e P2SH (3...)
+        # 'bech32' -> Native SegWit (bc1...)
+        addr_configs = [
+            ('Legacy', 'base58', 'p2pkh'),
+            ('P2SH', 'base58', 'p2sh_p2wpkh'),
+            ('SegWit', 'bech32', 'p2wpkh')
         ]
 
-        for label, enc in addr_types:
-            addr = k.address(encoding=enc)
-            bal = 0.0
-            status = "⏳"
-
+        for label, enc, script in addr_configs:
             try:
-                # Consulta API Mempool.space
+                # Método compatível com bitcoinlib 0.6.x+
+                addr = k.address(encoding=enc, script_type=script)
+                
+                # Consulta à API
                 r = requests.get(f"https://mempool.space/api/address/{addr}", timeout=10)
                 if r.status_code == 200:
                     data = r.json()
                     stats = data.get('chain_stats', {})
                     mempool = data.get('mempool_stats', {})
                     
-                    # Soma saldo confirmado + mempool
                     sats = (stats.get('funded_txo_sum', 0) + mempool.get('funded_txo_sum', 0)) - \
                            (stats.get('spent_txo_sum', 0) + mempool.get('spent_txo_sum', 0))
                     
-                    bal = sats / 100000000.0 # Converte para BTC
+                    bal_btc = sats / 100000000.0
                     status = "✅" if sats == 0 else "🚨 SALDO!"
                     
                     # LOG DE VARREDURA COM SALDO
-                    print(f"🔎 [{current}/{total}] W{WORKER_ID} | {status} | {label:8} | {addr} | Bal: {bal:.8f} BTC", flush=True)
+                    print(f"🔎 [{current}/{total}] W{WORKER_ID} | {status} | {label:6} | {addr} | Bal: {bal_btc:.8f} BTC", flush=True)
 
                     if sats > 0:
                         print(f"HEX_GEN:{clean_key}", flush=True)
                 
                 elif r.status_code == 429:
-                    print(f"⚠️ [{current}/{total}] W{WORKER_ID} | API Rate Limit - Aguardando 10s...", flush=True)
-                    time.sleep(10)
-                else:
-                    print(f"🔎 [{current}/{total}] W{WORKER_ID} | ❌ Erro API | {addr}", flush=True)
+                    time.sleep(10) # API Limit
+            except Exception:
+                continue
+            
+            time.sleep(0.12) # Delay preventivo
 
-            except Exception as e:
-                print(f"🔎 [{current}/{total}] W{WORKER_ID} | ⚠️ Erro Conexão | {addr}", flush=True)
-            
-            # Delay para evitar bloqueio de IP (Mempool aceita ~2 req/sec)
-            time.sleep(0.15)
-            
     except Exception as e:
-        print(f"❌ [{current}/{total}] Erro na chave: {e}", flush=True)
+        print(f"❌ [{current}/{total}] Erro na chave {clean_key[:10]}...: {e}", flush=True)
 
 if __name__ == "__main__":
     if os.path.exists('MASTER_POOL.txt'):
@@ -81,7 +78,7 @@ if __name__ == "__main__":
         total_keys = len(my_keys)
         
         print(f"🚀 Worker {WORKER_ID} Iniciado | {total_keys} chaves no lote.", flush=True)
-        print("-" * 100, flush=True)
+        print("-" * 110, flush=True)
         
         for idx, key in enumerate(my_keys, 1):
             process_key(key, idx, total_keys)
