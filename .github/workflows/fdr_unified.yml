@@ -6,42 +6,40 @@ on:
     - cron: '30 * * * *'
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }
+      - name: Criar Pool de Chaves
+        run: python prepare_pool.py
+      - name: Upload Pool
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-pool
+          path: MASTER_POOL.txt
+
   fdr_scan:
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       matrix:
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-      max-parallel: 10
-    
     steps:
-      - name: Checkout do código
-        uses: actions/checkout@v4
-      
-      - name: Configurar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.10' }
       - name: Instalar Dependências
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgmp3-dev
-          python -m pip install --upgrade pip
-          pip install requests bitcoinlib
-      
-      - name: 📋 INVENTÁRIO DE ARQUIVOS (Diagnóstico)
-        run: |
-          echo "=== LISTA COMPLETA DE ARQUIVOS NO REPOSITÓRIO ==="
-          find . -maxdepth 3 -not -path '*/.*'
-          echo "================================================"
-
-      - name: Dar Permissão ao Runner
-        run: chmod +x run_worker.sh
-
-      - name: Executar Sistema Unificado
+        run: pip install requests bitcoinlib
+      - name: Download Pool
+        uses: actions/download-artifact@v4
+        with:
+          name: master-pool
+      - name: Executar Varredura
         env:
           WORKER_ID: ${{ matrix.worker }}
           TOTAL_WORKERS: 10
         run: |
-          echo "🚀 Iniciando Worker $WORKER_ID de 10..."
+          chmod +x run_worker.sh
           ./run_worker.sh
