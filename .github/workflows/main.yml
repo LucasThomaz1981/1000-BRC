@@ -1,4 +1,4 @@
-name: 1000-BRC Varredura de Arquivos - 20 Workers
+name: 1000-BRC Varredura Final - 20 Workers
 
 on:
   workflow_dispatch:
@@ -11,8 +11,7 @@ jobs:
     strategy:
       matrix:
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-      # Aumentei para 10 para terminar o scan 2x mais rápido
-      max-parallel: 10 
+      max-parallel: 10 # Executa 10 de cada vez para respeitar limites do GitHub
     
     steps:
       - name: Checkout do código
@@ -23,23 +22,21 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Instalar Dependências do Sistema e Python
+      - name: Instalar Dependências
         run: |
-          # Necessário para a compilação da bitcoinlib no Linux
           sudo apt-get update
           sudo apt-get install -y libgmp3-dev
-          python -m pip install --upgrade pip
           pip install requests bitcoinlib
 
-      - name: Dar permissão ao Script Shell
-        run: chmod +x run_worker.sh
+      - name: Diagnóstico de Arquivos
+        run: |
+          echo "Lista de arquivos encontrados:"
+          find . -maxdepth 3 -not -path '*/.*'
 
-      - name: Executar Varredura
+      - name: Permissão e Execução
         env:
           WORKER_ID: ${{ matrix.worker }}
-          # Adicionei TOTAL_WORKERS para o Python saber como dividir os arquivos
           TOTAL_WORKERS: 20
         run: |
-          echo "Iniciando Worker $WORKER_ID..."
-          # O script shell chama o api_broadcast_system.py
+          chmod +x run_worker.sh
           ./run_worker.sh
