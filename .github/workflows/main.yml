@@ -1,48 +1,37 @@
-name: FDR Pool System - 20 Workers
+name: 1000-BRC Pool System - 20 Workers
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 * * * *'
 
 jobs:
-  prepare_pool:
+  prepare:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Extrair e Unificar Chaves
+        with: { python-version: '3.10' }
+      - name: Criar Pool
         run: python prepare_pool.py
-      - name: Salvar Pool como Artefato
+      - name: Upload Pool
         uses: actions/upload-artifact@v4
-        with:
-          name: keys-pool
-          path: MASTER_POOL.txt
+        with: { name: pool, path: MASTER_POOL.txt }
 
-  file_scan:
-    needs: prepare_pool
+  scan:
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       matrix:
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-      max-parallel: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Instalar Dependências
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgmp3-dev
-          pip install requests bitcoinlib
-      - name: Baixar Pool de Chaves
+        with: { python-version: '3.10' }
+      - name: Deps
+        run: pip install requests bitcoinlib
+      - name: Download Pool
         uses: actions/download-artifact@v4
-        with:
-          name: keys-pool
-      - name: Executar Varredura
+        with: { name: pool }
+      - name: Run
         env:
           WORKER_ID: ${{ matrix.worker }}
           TOTAL_WORKERS: 20
