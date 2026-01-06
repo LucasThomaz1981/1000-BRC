@@ -15,7 +15,7 @@ def process_key(priv_key_str, current, total):
     if not clean_key: return
 
     try:
-        # Suporte a chaves mestras
+        # Suporte a chaves mestras (Deep Scan)
         if clean_key.startswith('xprv'):
             print(f"📦 [{current}/{total}] W{WORKER_ID} | Derivando Master Key...", flush=True)
             master = Key(clean_key)
@@ -26,9 +26,7 @@ def process_key(priv_key_str, current, total):
         # Inicializa a chave na rede Bitcoin
         k = Key(clean_key, network='bitcoin')
         
-        # Formatos compatíveis com as versões novas da bitcoinlib
-        # 'base58' -> Legacy (1...) e P2SH (3...)
-        # 'bech32' -> Native SegWit (bc1...)
+        # Mapeamento para bitcoinlib 0.6.x+ (Legacy, P2SH e Native SegWit)
         addr_configs = [
             ('Legacy', 'base58', 'p2pkh'),
             ('P2SH', 'base58', 'p2sh_p2wpkh'),
@@ -37,10 +35,9 @@ def process_key(priv_key_str, current, total):
 
         for label, enc, script in addr_configs:
             try:
-                # Método compatível com bitcoinlib 0.6.x+
                 addr = k.address(encoding=enc, script_type=script)
                 
-                # Consulta à API
+                # Consulta à API Mempool.space
                 r = requests.get(f"https://mempool.space/api/address/{addr}", timeout=10)
                 if r.status_code == 200:
                     data = r.json()
@@ -53,7 +50,7 @@ def process_key(priv_key_str, current, total):
                     bal_btc = sats / 100000000.0
                     status = "✅" if sats == 0 else "🚨 SALDO!"
                     
-                    # LOG DE VARREDURA COM SALDO
+                    # LOG DE VARREDURA COM SALDO EM TEMPO REAL
                     print(f"🔎 [{current}/{total}] W{WORKER_ID} | {status} | {label:6} | {addr} | Bal: {bal_btc:.8f} BTC", flush=True)
 
                     if sats > 0:
@@ -64,14 +61,14 @@ def process_key(priv_key_str, current, total):
             except Exception:
                 continue
             
-            time.sleep(0.12) # Delay preventivo
+            time.sleep(0.12) # Delay preventivo para não ser banido da API
 
     except Exception as e:
         print(f"❌ [{current}/{total}] Erro na chave {clean_key[:10]}...: {e}", flush=True)
 
 if __name__ == "__main__":
     if os.path.exists('MASTER_POOL.txt'):
-        with open('MASTER_POOL.txt', 'r', encoding='utf-8') as f:
+        with open('MASTER_POOL.txt', 'r', encoding='utf-8', errors='ignore') as f:
             all_keys = [line.strip() for line in f if line.strip()]
         
         my_keys = [all_keys[i] for i in range(len(all_keys)) if i % TOTAL_WORKERS == (WORKER_ID - 1)]
