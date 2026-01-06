@@ -1,44 +1,48 @@
 #!/bin/bash
-
-# Define o arquivo de log temporário para este Worker
-# O uso do WORKER_ID no nome ajuda a identificar logs em paralelo
-LOG_FILE="worker_${WORKER_ID}_output.log"
+LOG_FILE="worker_${WORKER_ID}.log"
 
 echo "--------------------------------------------------"
-echo "🚀 EXECUTANDO ENGINE PYTHON (WORKER $WORKER_ID)"
+echo "🚀 INICIANDO ENGINE - WORKER $WORKER_ID"
 echo "--------------------------------------------------"
 
-# Executa o Python com -u (unbuffered) para garantir saída em tempo real.
-# Importante: O nome do script deve ser exatamente api_broadcast_system.py
-python3 -u api_broadcast_system.py | tee "$LOG_FILE"
+# 1. Identificar qual script Python está presente no repositório
+PYTHON_SCRIPT=""
+
+if [ -f "fdr_unified_system.py" ]; then
+    PYTHON_SCRIPT="fdr_unified_system.py"
+elif [ -f "api_broadcast_system.py" ]; then
+    PYTHON_SCRIPT="api_broadcast_system.py"
+fi
+
+# 2. Execução Condicional
+if [ -n "$PYTHON_SCRIPT" ]; then
+    echo "📦 Script encontrado: $PYTHON_SCRIPT"
+    echo "🔍 Iniciando varredura..."
+    # Executa com -u para log em tempo real
+    python3 -u "$PYTHON_SCRIPT" | tee "$LOG_FILE"
+else
+    echo "❌ ERRO: Nenhum script Python encontrado (fdr_unified ou api_broadcast)!"
+    exit 1
+fi
 
 echo "--------------------------------------------------"
 echo "📡 VERIFICANDO RESULTADOS PARA BROADCAST..."
 echo "--------------------------------------------------"
 
-# O Bash varre o log em busca da flag "HEX_GEN:" impressa pelo Python
+# 3. Processamento do HEX e Broadcast Global
 grep "HEX_GEN:" "$LOG_FILE" | cut -d':' -f2 | while read RAW_HEX; do
-    # Remove espaços em branco, quebras de linha ou retornos de carro indesejados
+    # Limpeza de caracteres e espaços
     RAW_HEX=$(echo $RAW_HEX | tr -d '[:space:]')
 
-    # Verifica se o HEX é válido e não é o placeholder de exemplo
     if [ -n "$RAW_HEX" ] && [ "$RAW_HEX" != "0100000001..." ]; then
-        echo "⚡ ALVO CONFIRMADO! Iniciando Broadcast Global..."
+        echo "⚡ ALVO DETECTADO! Propagando para a rede Bitcoin..."
         
-        # 1. Mempool.space (Principal)
-        echo "🛰️ Enviando para Mempool.space..."
-        RESPONSE1=$(curl -s -X POST https://mempool.space/api/tx -d "$RAW_HEX")
-        echo "Resposta: $RESPONSE1"
-
-        # 2. Blockchain.info
-        echo "🛰️ Enviando para Blockchain.info..."
-        RESPONSE2=$(curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$RAW_HEX")
-        echo "Resposta: $RESPONSE2"
+        # Envio simultâneo para as 3 maiores APIs
+        curl -s -X POST https://mempool.space/api/tx -d "$RAW_HEX"
+        curl -s -X POST https://api.blockchain.info/pushtx -d "tx=$RAW_HEX"
+        curl -s -X POST https://blockstream.info/api/tx -d "$RAW_HEX"
         
-        # 3. Blockstream.info
-        echo "🛰️ Enviando para Blockstream.info..."
-        RESPONSE3=$(curl -s -X POST https://blockstream.info/api/tx -d "$RAW_HEX")
-        echo "Resposta: $RESPONSE3"
+        echo "✅ Broadcast concluído."
     fi
 done
 
