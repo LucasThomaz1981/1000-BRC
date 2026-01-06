@@ -1,12 +1,11 @@
 name: 1000-BRC Pool System - 20 Workers
 
 on:
-  workflow_dispatch: # Permite iniciar manualmente
+  workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *' # Executa a cada 6 horas automaticamente
+    - cron: '0 */6 * * *'
 
 jobs:
-  # JOB 1: Prepara o arquivo único com todas as chaves do repositório
   prepare:
     runs-on: ubuntu-latest
     steps:
@@ -20,12 +19,7 @@ jobs:
 
       - name: Criar Pool de Chaves (Unificação)
         run: |
-          if [ -f "prepare_pool.py" ]; then
-            python prepare_pool.py
-          else
-            echo "Erro: prepare_pool.py não encontrado!"
-            exit 1
-          fi
+          python prepare_pool.py
 
       - name: Upload do Pool como Artefacto
         uses: actions/upload-artifact@v4
@@ -34,14 +28,12 @@ jobs:
           path: MASTER_POOL.txt
           retention-days: 1
 
-  # JOB 2: Varredura em massa distribuída por 20 instâncias
   scan:
     needs: prepare
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
+      fail-fast: false # Não cancela os outros se um worker falhar
       matrix:
-        # Define os 20 workers paralelos
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     steps:
@@ -58,22 +50,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgmp3-dev libssl-dev
           python -m pip install --upgrade pip
-          pip install requests bitcoinlib
+          # Instalando especificamente o que a bitcoinlib precisa para não dar erro de compilação
+          pip install requests bitcoinlib 
 
       - name: Download do Pool de Chaves
         uses: actions/download-artifact@v4
         with:
           name: pool-keys
+          path: . # FORÇA o download para a pasta raiz, sem criar subpasta
 
       - name: Executar Varredura e Auto-Broadcast
         env:
           WORKER_ID: ${{ matrix.worker }}
           TOTAL_WORKERS: 20
         run: |
-          # Garante permissão de execução no script bash
           chmod +x run_worker.sh
-          
           echo "Iniciando Worker $WORKER_ID de $TOTAL_WORKERS..."
-          
-          # O comando 'unbuffer' ou 'python -u' é essencial para ver os logs em tempo real
+          # O script rodará por até 6 horas (limite do GitHub)
           ./run_worker.sh
