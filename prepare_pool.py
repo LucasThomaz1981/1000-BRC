@@ -1,13 +1,14 @@
 import re, os, json
 
 def clean_rtf(text):
+    # Remove metadados de arquivos RTF que quebram chaves privadas
     return re.sub(r'\{\*?\\[^{}]+\}|\\([a-z0-9]+)\s?|;', '', text)
 
 def extract_keys():
     exts = ('.wallet', '.txt', '.key', '.rtf', '.json', '.csv')
     keys_found = set()
     
-    print("🛠️ Iniciando Garimpo de Chaves...")
+    print("🛠️ Iniciando Garimpo de Chaves em todos os formatos...")
     
     for root, dirs, files in os.walk('.'):
         for f in files:
@@ -19,7 +20,7 @@ def extract_keys():
                         if path.lower().endswith('.rtf'):
                             content = clean_rtf(content)
                         
-                        # Regex para WIF e HEX 64
+                        # Captura WIF (L, K, 5) e HEX (64 chars)
                         wifs = re.findall(r'[LK5][1-9A-HJ-NP-Za-km-z]{50,51}', content)
                         hex_keys = re.findall(r'\b[0-9a-fA-F]{64}\b', content)
                         
@@ -31,7 +32,7 @@ def extract_keys():
         for k in sorted(list(keys_found)):
             f.write(f"{k}\n")
     
-    print(f"✅ Sucesso! {len(keys_found)} chaves únicas unificadas em MASTER_POOL.txt")
+    print(f"✅ Sucesso! {len(keys_found)} chaves únicas unificadas.")
 
 if __name__ == "__main__":
     extract_keys()
