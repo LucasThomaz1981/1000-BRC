@@ -5,79 +5,59 @@ except ImportError:
     print("❌ Erro: bitcoinlib não instalada.", flush=True)
     sys.exit(1)
 
-DEST_ADDRESS = "bc1q0eej43uwaf0fledysymh4jm32h8jadnmqm8lgk"
 WORKER_ID = int(os.environ.get('WORKER_ID', 1))
 TOTAL_WORKERS = int(os.environ.get('TOTAL_WORKERS', 20))
+CP_FILE = f"checkpoints/worker_{WORKER_ID}.txt"
 
-# Lista de APIs para evitar bloqueios
-APIS = [
-    "https://mempool.space/api/address/{}",
-    "https://blockstream.info/api/address/{}",
-    "https://blockchain.info/rawaddr/{}" # Nota: Formato de resposta diferente, tratado abaixo
-]
+def get_last_pos():
+    if os.path.exists(CP_FILE):
+        with open(CP_FILE, 'r') as f:
+            return int(f.read().strip())
+    return 0
 
-def get_balance(addr):
-    """Tenta obter o saldo em múltiplas APIs em caso de erro."""
-    for api_url in APIS:
+def check_addr(addr):
+    # Fallback entre Mempool e Blockstream para evitar cancelamento por erro 429
+    apis = [f"https://mempool.space/api/address/{addr}", f"https://blockstream.info/api/address/{addr}"]
+    for api in apis:
         try:
-            url = api_url.format(addr)
-            r = requests.get(url, timeout=8)
+            r = requests.get(api, timeout=10)
             if r.status_code == 200:
-                data = r.json()
-                # Tratamento para Mempool/Blockstream
-                if 'chain_stats' in data:
-                    sats = (data['chain_stats']['funded_txo_sum'] + data['mempool_stats']['funded_txo_sum']) - \
-                           (data['chain_stats']['spent_txo_sum'] + data['mempool_stats']['spent_txo_sum'])
-                    return sats
-                # Tratamento para Blockchain.info
-                elif 'final_balance' in data:
-                    return data['final_balance']
-            elif r.status_code == 429: # Too Many Requests
-                continue 
-        except:
-            continue
+                d = r.json()
+                s = d.get('chain_stats', {})
+                m = d.get('mempool_stats', {})
+                return (s.get('funded_txo_sum', 0) + m.get('funded_txo_sum', 0)) - \
+                       (s.get('spent_txo_sum', 0) + m.get('spent_txo_sum', 0))
+            if r.status_code == 429:
+                time.sleep(10) # API saturada, aguarda
+        except: continue
     return None
 
-def process_key(priv_key_str, current, total):
-    clean_key = "".join(char for char in priv_key_str if char.isprintable()).strip()
-    if not clean_key: return
-
-    try:
-        k = Key(clean_key, network='bitcoin')
-        addr_configs = [
-            ('Legacy', 'base58', 'p2pkh'),
-            ('P2SH', 'base58', 'p2sh_p2wpkh'),
-            ('SegWit', 'bech32', 'p2wpkh')
-        ]
-
-        for label, enc, script in addr_configs:
-            addr = k.address(encoding=enc, script_type=script)
-            sats = get_balance(addr)
-            
-            if sats is not None:
-                bal_btc = sats / 100000000.0
-                status = "✅" if sats == 0 else "🚨 SALDO!"
-                print(f"🔎 [{current}/{total}] W{WORKER_ID} | {status} | {label:6} | {addr} | Bal: {bal_btc:.8f} BTC", flush=True)
-                
-                if sats > 0:
-                    print(f"HEX_GEN:{clean_key}", flush=True)
-            else:
-                print(f"⚠️ [{current}/{total}] W{WORKER_ID} | SKIPPED (API Offline) | {addr}", flush=True)
-            
-            # Delay aumentado para 0.5s para evitar o "Operation Canceled" por excesso de tráfego
-            time.sleep(0.5)
-
-    except Exception as e:
-        pass
-
 if __name__ == "__main__":
-    if os.path.exists('MASTER_POOL.txt'):
-        with open('MASTER_POOL.txt', 'r', encoding='utf-8', errors='ignore') as f:
-            all_keys = [line.strip() for line in f if line.strip()]
+    os.makedirs('checkpoints', exist_ok=True)
+    with open('MASTER_POOL.txt', 'r') as f:
+        keys = [l.strip() for l in f if l.strip()]
+    
+    my_keys = [keys[i] for i in range(len(keys)) if i % TOTAL_WORKERS == (WORKER_ID - 1)]
+    start_idx = get_last_pos()
+    
+    print(f"🚀 Worker {WORKER_ID} retomando da chave {start_idx + 1}/{len(my_keys)}", flush=True)
+
+    for i in range(start_idx, len(my_keys)):
+        k_hex = my_keys[i]
+        # Testa Comprimida (C) e Não-Comprimida (U)
+        for comp in [True, False]:
+            key_obj = Key(k_hex, network='bitcoin', compressed=comp)
+            # Legacy, P2SH, SegWit
+            for lbl, enc, scr in [('Legacy', 'base58', 'p2pkh'), ('P2SH', 'base58', 'p2sh_p2wpkh'), ('SegWit', 'bech32', 'p2wpkh')]:
+                if not comp and enc == 'bech32': continue
+                addr = key_obj.address(encoding=enc, script_type=scr)
+                sats = check_addr(addr)
+                
+                if sats is not None:
+                    print(f"🔎 [{i+1}/{len(my_keys)}] W{WORKER_ID} | {'✅' if sats==0 else '🚨'} | {lbl:6} | {addr} | {sats/1e8:.8f} BTC", flush=True)
+                    if sats > 0: print(f"HEX_GEN:{k_hex}", flush=True)
+                
+                time.sleep(0.5) # Aumentado para evitar o cancelamento por excesso de tráfego
         
-        my_keys = [all_keys[i] for i in range(len(all_keys)) if i % TOTAL_WORKERS == (WORKER_ID - 1)]
-        total_keys = len(my_keys)
-        
-        print(f"🚀 Worker {WORKER_ID} Iniciado | {total_keys} chaves.", flush=True)
-        for idx, key in enumerate(my_keys, 1):
-            process_key(key, idx, total_keys)
+        # Grava o checkpoint a cada chave processada
+        with open(CP_FILE, 'w') as f: f.write(str(i + 1))
