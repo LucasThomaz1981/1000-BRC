@@ -2,11 +2,9 @@ name: 1000-BRC Pool System - Persistent
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */4 * * *' # Executa a cada 4 horas para manter os checkpoints frescos
 
 permissions:
-  contents: write # Permite que o worker grave os checkpoints no repositório
+  contents: write
 
 jobs:
   scan:
@@ -20,21 +18,27 @@ jobs:
       - name: Checkout Código
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Necessário para fazer push dos checkpoints
+          fetch-depth: 0
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Instalar Dependências de Sistema
+      - name: Instalar Dependências
         run: |
           sudo apt-get update
           sudo apt-get install -y libgmp3-dev libssl-dev
-
-      - name: Instalar Bibliotecas Python
-        run: |
           pip install requests bitcoinlib
+
+      # --- CORREÇÃO 1: GARANTIR QUE O ARQUIVO EXISTA ---
+      # Se o arquivo estiver no seu repositório, este passo garante que ele seja movido para a raiz
+      - name: Verificar MASTER_POOL.txt
+        run: |
+          if [ ! -f "MASTER_POOL.txt" ]; then
+            echo "❌ Erro: MASTER_POOL.txt não encontrado no repositório!"
+            exit 1
+          fi
 
       - name: Executar Varredura
         timeout-minutes: 340
@@ -43,17 +47,23 @@ jobs:
           TOTAL_WORKERS: 20
         run: |
           chmod +x run_worker.sh
-          # Cria pasta de checkpoints se não existir
           mkdir -p checkpoints
-          ./run_worker.sh
+          # Rodar com python -u para log em tempo real
+          python3 -u api_broadcast_system.py
 
+      # --- CORREÇÃO 2: GIT PUSH SEGURO ---
       - name: Salvar Progresso (Git Push Checkpoints)
-        if: always() # Executa mesmo que o script de varredura seja cancelado
+        if: always()
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          # Adiciona apenas os checkpoints do worker específico para evitar conflitos de merge
+          
+          # Stash mudanças temporárias para permitir o rebase
+          git stash
           git pull origin main --rebase
+          git stash pop || echo "Sem mudanças para recuperar"
+          
+          mkdir -p checkpoints
           git add checkpoints/worker_${{ matrix.worker }}.txt
           git commit -m "Worker ${{ matrix.worker }}: checkpoint atualizado" || exit 0
           git push origin main
