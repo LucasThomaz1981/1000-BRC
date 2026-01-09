@@ -1,82 +1,59 @@
-name: 1000-BRC Pool System - 20 Workers
+name: 1000-BRC Pool System - Persistent
 
 on:
-  workflow_dispatch: # Início manual
+  workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *' # Executa a cada 6 horas automaticamente
+    - cron: '0 */4 * * *' # Executa a cada 4 horas para manter os checkpoints frescos
+
+permissions:
+  contents: write # Permite que o worker grave os checkpoints no repositório
 
 jobs:
-  # JOB 1: Prepara o arquivo único e limpa chaves duplicadas
-  prepare:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout do código
-        uses: actions/checkout@v4
-
-      - name: Configurar Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Unificar e Limpar Pool de Chaves
-        run: |
-          python prepare_pool.py
-
-      - name: Upload do Pool como Artefato
-        uses: actions/upload-artifact@v4
-        with:
-          name: pool-keys
-          path: MASTER_POOL.txt
-          retention-days: 1
-
-  # JOB 2: Varredura em massa distribuída
   scan:
-    needs: prepare
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false # Se um worker falhar, os outros 19 continuam
+      fail-fast: false
       matrix:
         worker: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     
     steps:
-      - name: Checkout do código
+      - name: Checkout Código
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necessário para fazer push dos checkpoints
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Instalar Dependências de Sistema e Python
+      - name: Instalar Dependências de Sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y libgmp3-dev libssl-dev
-          python -m pip install --upgrade pip
+
+      - name: Instalar Bibliotecas Python
+        run: |
           pip install requests bitcoinlib
 
-      - name: Download do Pool de Chaves
-        uses: actions/download-artifact@v4
-        with:
-          name: pool-keys
-          path: .
-
-      - name: Executar Varredura e Auto-Broadcast
-        timeout-minutes: 340 # Limite de quase 6 horas por worker
+      - name: Executar Varredura
+        timeout-minutes: 340
         env:
           WORKER_ID: ${{ matrix.worker }}
           TOTAL_WORKERS: 20
         run: |
-          # Garante que o script tenha permissão de execução
           chmod +x run_worker.sh
-          
-          echo "🚀 Iniciando Worker $WORKER_ID de $TOTAL_WORKERS..."
-          
-          # Executa o bash que coordena o Python em modo unbuffered (-u)
+          # Cria pasta de checkpoints se não existir
+          mkdir -p checkpoints
           ./run_worker.sh
 
-      - name: Upload de Logs em caso de erro
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-worker-${{ matrix.worker }}
-          path: worker_${{ matrix.worker }}.log
+      - name: Salvar Progresso (Git Push Checkpoints)
+        if: always() # Executa mesmo que o script de varredura seja cancelado
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # Adiciona apenas os checkpoints do worker específico para evitar conflitos de merge
+          git pull origin main --rebase
+          git add checkpoints/worker_${{ matrix.worker }}.txt
+          git commit -m "Worker ${{ matrix.worker }}: checkpoint atualizado" || exit 0
+          git push origin main
